@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.models import Article
 from app.dao import ArticleCrud

@@ -33,4 +33,4 @@ app.include_router(article_router, prefix='/article', tags=['文章模块'])
 
 
 if __name__ == '__main__':
-    run(app, host='0.0.0.0', port=80)
+    run(app, host='0.0.0.0', port=8088)

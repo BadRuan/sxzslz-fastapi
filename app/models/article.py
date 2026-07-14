@@ -16,6 +16,8 @@ class Article(SQLModel, table=True):
     id: int = Field(primary_key=True, default=None)  # type: ignore[arg-type]
     # 唯一url
     slug: str = Field(unique=True, default_factory=generate_slug)
+    # 封面图片
+    cover_img: str = Field(nullable=True)
     # 标题
     title: str = Field(nullable=False)
     # 内容
@@ -41,6 +43,7 @@ class Article(SQLModel, table=True):
         return {
             "id": self.id,
             "slug": self.slug,
+            "cover_img": self.cover_img,
             "title": self.title,
             "is_public": self.is_public,
             "is_recommended": self.is_recommended,

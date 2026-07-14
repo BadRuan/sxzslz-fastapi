@@ -12,6 +12,7 @@ router = APIRouter()
 
 class ArticleCreate(BaseModel):
     title: str
+    cover_img: str
     content: Optional[str] = None
     category_id: int
     user_id: int
@@ -20,6 +21,7 @@ class ArticleCreate(BaseModel):
 
 class ArticleOut(BaseModel):
     slug: str
+    cover_img: str
     title: str
     category_id: int
     user_id: int
@@ -33,6 +35,7 @@ class ArticleOut(BaseModel):
 
 class ArticleDetailOut(BaseModel):
     slug: str
+    cover_img: str
     title: str
     content: Optional[str]
     category_id: int
@@ -44,10 +47,6 @@ class ArticleDetailOut(BaseModel):
 
     class Config:
         from_attributes = True
-
-class ArticleCountOut(BaseModel):
-    total: int
-    month: int
 
 @router.post("/", response_model=ArticleDetailOut, status_code=201)
 async def create_article(
@@ -97,11 +96,3 @@ async def get_article_detail(
     if article is None:
         raise HTTPException(status_code=404, detail="文章不存在")
     return ArticleDetailOut.model_validate(article)
-
-@router.get("/count")
-async def get_article_count(
-    session: AsyncSession = Depends(get_session)
-):
-    service = ArticleService(session)
-    total, month = await service.get_count()
-    return ArticleCountOut(total=total, month=month)
