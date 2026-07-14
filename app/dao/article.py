@@ -15,21 +15,6 @@ class ArticleCrud:
         await self.session.flush()
         return article
 
-    async def get_latest(self, limit: int) -> PageResponse:
-        stmt = (
-            select(Article)
-            .where(Article.is_public == True)  # type: ignore[arg-type]
-            .order_by(desc(Article.create_at))
-            .limit(limit)
-        )
-        result = await self.session.exec(stmt)
-        return PageResponse(
-            data=list(result.all()),
-            total=limit,
-            page=1,
-            page_size=limit
-            )
-
     async def get_recommended(self, limit: int) -> PageResponse:
         stmt = (
             select(Article)
@@ -43,6 +28,26 @@ class ArticleCrud:
             total=limit,
             page=1,
             page_size=limit
+            )
+
+    async def get_articles_by_category(self, category_id: int, page_size: int) -> PageResponse:
+        stmt = (
+            select(Article)
+            .where(
+                Article.is_public == True,
+                Article.category_id == category_id,
+                )  # type: ignore[arg-type]
+            .order_by(desc(Article.create_at))
+            .limit(page_size)
+        )
+        result = await self.session.exec(stmt)
+        result_list = list(result.all())
+        length = len(result_list)
+        return PageResponse(
+            data=result_list,
+            total=length,
+            page=1,
+            page_size=page_size
             )
 
     async def get_detail_by_slug(self, article_slug: str) -> Optional[Article]:

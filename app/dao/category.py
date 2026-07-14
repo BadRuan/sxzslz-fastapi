@@ -1,5 +1,5 @@
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlmodel import select
+from sqlmodel import select, func
 from app.models import Category
 from app.schema import PageResponse
 
@@ -23,3 +23,7 @@ class CategoryCrud:
             page_size=length
         )
     
+    async def get_total_count(self) -> int:
+        return (await self.session.scalar(
+            func.count(Category.id)  # type: ignore[arg-type]
+        )) or 0
