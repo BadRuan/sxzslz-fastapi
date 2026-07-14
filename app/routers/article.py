@@ -58,9 +58,10 @@ async def create_article(
     created = await service.create(article)
     return ArticleDetailOut.model_validate(created)
 
+@router.get("/latest/", response_model=PageResponse[ArticleOut])
 @router.get("/latest", response_model=PageResponse[ArticleOut])
 async def get_latest_article(
-    limit: int = Query(default=3, ge=1, description='最近新闻数量'),
+    limit: int = Query(default=30, ge=1, description='最近新闻数量'),
     session: AsyncSession = Depends(get_session)
 ):
     service = ArticleService(session)
@@ -72,6 +73,7 @@ async def get_latest_article(
         page_size=result.page_size
     )
 
+@router.get("/recommended/", response_model=PageResponse[ArticleOut])
 @router.get("/recommended", response_model=PageResponse[ArticleOut])
 async def get_recommended_article(
     limit: int = Query(default=3, ge=1, description='推荐新闻数量'),
@@ -86,6 +88,7 @@ async def get_recommended_article(
         page_size=result.page_size
     )
 
+@router.get("/detail/{slug}/", response_model=ArticleDetailOut)
 @router.get("/detail/{slug}", response_model=ArticleDetailOut)
 async def get_article_detail(
     slug: str,
