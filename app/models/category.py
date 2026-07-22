@@ -5,7 +5,7 @@ from sqlmodel import SQLModel, Field
 class Category(SQLModel, table=True):
     __tablename__: str = "categories"
 
-    id: str = Field(primary_key=True, default=None)  # type: ignore[arg-type]
+    id: int = Field(primary_key=True, default=None)
     name: str = Field(unique=True, nullable=False)
 
     def __repr__(self) -> str:
