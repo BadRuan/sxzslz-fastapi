@@ -11,7 +11,6 @@ class CategoryCrud:
     async def get_all(self) -> PageResponse:
         stmt = (
             select(Category)
-            .order_by(Category.id)
         )
         result = await self.session.exec(stmt)
         data = list(result.all())

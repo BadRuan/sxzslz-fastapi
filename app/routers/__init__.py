@@ -1,9 +1,7 @@
-from .user import router as user_router
-from .category import router as category_router
+from .baseInfo import router as baseinfo_router
 from .article import router as article_router
 
 __all__ = [
-    'user_router',
-    'category_router',
+    'baseinfo_router',
     'article_router'
 ]

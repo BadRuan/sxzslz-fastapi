@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from uvicorn import run
 from app.database import init_db
-from app.routers import user_router, category_router, article_router
+from app.routers import baseinfo_router, article_router
 
 
 @asynccontextmanager
@@ -27,8 +27,7 @@ app.add_middleware(
     allow_headers=["*"],  # 允许所有请求头
 )
 
-app.include_router(user_router, prefix='/user', tags=['用户模块'])
-app.include_router(category_router, prefix='/category', tags=['分类模块'])
+app.include_router(baseinfo_router, tags=['基础信息模块'])
 app.include_router(article_router, prefix='/article', tags=['文章模块'])
 
 
