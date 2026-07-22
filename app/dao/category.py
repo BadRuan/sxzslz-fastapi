@@ -10,7 +10,7 @@ class CategoryCrud:
 
     async def get_all(self) -> PageResponse:
         stmt = (
-            select(Category)
+            select(Category).order_by(Category.id) # type: ignore[arg-type]
         )
         result = await self.session.exec(stmt)
         data = list(result.all())
