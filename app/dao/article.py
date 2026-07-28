@@ -2,7 +2,7 @@ from typing import Optional
 from datetime import datetime
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select, desc, func, update
-from app.models import Article
+from app.model import Article
 from app.schema import PageResponse
 
 

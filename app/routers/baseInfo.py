@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlmodel.ext.asyncio.session import AsyncSession
 from pydantic import BaseModel
-from app.models import Category
+from app.model import Category
 from app.database import get_session
 from app.service import UserService, CategoryService
 from app.schema import PageResponse

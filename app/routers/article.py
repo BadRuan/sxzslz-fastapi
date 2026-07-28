@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.database import get_session
-from app.models import Article
+from app.model import Article
 from app.service import ArticleService
 from app.schema import PageResponse
 

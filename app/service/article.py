@@ -1,6 +1,6 @@
 from typing import Optional, Tuple
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.models import Article
+from app.model import Article
 from app.dao import ArticleCrud, CategoryCrud
 from app.schema import PageResponse
 

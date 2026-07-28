@@ -1,6 +1,6 @@
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select, func
-from app.models import Category
+from app.model import Category
 from app.schema import PageResponse
 
 

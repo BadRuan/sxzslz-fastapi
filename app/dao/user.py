@@ -1,8 +1,7 @@
-from typing import Optional
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select, func
 from argon2 import PasswordHasher
-from app.models import User
+from app.model import User
 from app.schema import PageResponse
 
 ph = PasswordHasher(
