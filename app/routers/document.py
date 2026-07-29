@@ -27,7 +27,7 @@ async def create_upload_file(file: UploadFile, session: AsyncSession = Depends(g
     if file.content_type not in allow_type.document:
         raise HTTPException(
             status_code=400,
-            detail="仅支持txt、pdf、doc、docx、xls、xlsx格式的文件"
+            detail="仅支持txt、pdf、doc、docx、xls、xlsx、zip格式的文件"
         )
     
     filename = file.filename or 'default_name'

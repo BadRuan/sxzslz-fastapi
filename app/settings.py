@@ -44,6 +44,7 @@ allow_type: ALLOW_TYPE = ALLOW_TYPE(
         "application/vnd.ms-powerpoint",
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "text/plain",
-        "application/pdf"
+        "application/pdf",
+        "application/zip"
     ]
 )
