@@ -25,25 +25,43 @@ class ArticleCrud:
         result = await self.session.exec(stmt)
         return list(result)
 
-    async def get_articles_by_category(self, category_id: int, page_size: int) -> PageResponse:
-        stmt = (
+    async def get_articles_by_category(self, category_id: int, page: int = 1, page_size: int = 20) -> PageResponse:
+        # 计算偏移量
+        offset = (page - 1) * page_size
+
+        # 查询总数
+        count_stmt = (
+            select(func.count(Article.id)) # type: ignore[arg-type]
+            .where(
+                Article.is_public == True,
+                Article.category_id == category_id,
+            )
+        )
+        total = await self.session.scalar(count_stmt) or 0
+
+        # 查询分页数据
+        data_stmt = (
             select(Article)
             .where(
                 Article.is_public == True,
                 Article.category_id == category_id,
-                )  # type: ignore[arg-type]
+            )
             .order_by(desc(Article.create_at))
+            .offset(offset)
             .limit(page_size)
         )
-        result = await self.session.exec(stmt)
+        result = await self.session.exec(data_stmt)
         result_list = list(result.all())
-        length = len(result_list)
+
+        # 计算是否有下一页
+        has_next = (offset + page_size) < total
+
         return PageResponse(
             data=result_list,
-            total=length,
-            page=1,
-            has_next=False,
-            page_size=page_size
+            total=total,
+            page=page,
+            page_size=page_size,
+            has_next=has_next
         )
 
     async def get_detail_by_slug(self, article_slug: str) -> Optional[Article]:

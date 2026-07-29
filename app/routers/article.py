@@ -62,18 +62,13 @@ async def create_article(
 @router.get("/latest", response_model=PageResponse[ArticleOut])
 async def get_latest_article(
     category_id: int = Query(default=1, ge=1, description='文章分类'),
-    page_size: int = Query(default=30, ge=1, description='文章数量'),
+    page: int = Query(default=1, ge=1, description='页码'),
+    page_size: int = Query(default=30, ge=1, description='每页数量'),
     session: AsyncSession = Depends(get_session)
 ):
     service = ArticleService(session)
-    result = await service.get_articles_by_category(category_id, page_size)
-    return PageResponse(
-        data=[ArticleOut.model_validate(a) for a in result.data],
-        total=result.total,
-        page=result.page,
-        has_next=False,
-        page_size=result.page_size
-    )
+    result = await service.get_articles_by_category(category_id, page, page_size)
+    return result
 
 @router.get("/recommended/", response_model=List[ArticleOut])
 @router.get("/recommended", response_model=List[ArticleOut])

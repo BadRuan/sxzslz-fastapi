@@ -16,7 +16,7 @@ class ArticleService:
     async def get_recommended(self, limit: int) -> List[Article]:
         return await self.crud.get_recommended(limit)
     
-    async def get_articles_by_category(self, category_id: int, page_size: int) -> PageResponse:  
+    async def get_articles_by_category(self, category_id: int,page: int, page_size: int) -> PageResponse:  
         category_count: int = await self.category_curd.get_total_count()
         if category_id > category_count:
             return PageResponse(
@@ -27,7 +27,7 @@ class ArticleService:
             page_size=0
         )
         else:
-            return await self.crud.get_articles_by_category(category_id, page_size)
+            return await self.crud.get_articles_by_category(category_id, page, page_size)
 
     
     async def get_detail_by_slug(self, slug: str) -> Optional[Article]:
