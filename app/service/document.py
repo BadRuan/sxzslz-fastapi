@@ -3,7 +3,8 @@ from os import path, makedirs, remove
 from pathlib import Path
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.settings import upload_dir
-from app.model import Document, PageResponse
+from app.schema import PageResponse
+from app.model import Document
 from app.dao import DocumentCrud
 
 

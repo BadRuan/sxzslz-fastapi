@@ -3,7 +3,6 @@ from .category import Category
 from .article import Article
 from .image import Image
 from .document import Document
-from .base import PaginationParams, PageResponse
 
 
 __all__ = [
@@ -12,6 +11,4 @@ __all__ = [
     'Article',
     'Image',
     'Document',
-    'PaginationParams',
-    'PageResponse'
     ]

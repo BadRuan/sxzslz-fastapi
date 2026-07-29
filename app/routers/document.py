@@ -7,7 +7,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.settings import upload_dir, allow_type
 from app.database import get_session
 from app.service import DocumentService
-from app.model import PageResponse
+from app.schema import PageResponse
 
 
 router = APIRouter()

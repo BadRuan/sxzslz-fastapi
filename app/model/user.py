@@ -1,5 +1,4 @@
 from typing import Dict
-from uuid import uuid4
 from sqlmodel import SQLModel, Field
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, InvalidHash

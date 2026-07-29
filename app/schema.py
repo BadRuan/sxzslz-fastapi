@@ -20,6 +20,7 @@ class PageResponse(BaseModel, Generic[T]):
     total: int = Field(description="总记录数")
     page: int = Field(description="当前页码")
     page_size: int = Field(description="每页条数")
+    has_next: bool = Field(description="是否有下页")
 
 def pagination(cur_page: int, page_size: int, total_size: int) -> Dict:
     """计算分页元数据"""

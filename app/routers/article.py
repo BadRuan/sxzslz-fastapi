@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.database import get_session
 from app.model import Article
@@ -71,23 +71,19 @@ async def get_latest_article(
         data=[ArticleOut.model_validate(a) for a in result.data],
         total=result.total,
         page=result.page,
+        has_next=False,
         page_size=result.page_size
     )
 
-@router.get("/recommended/", response_model=PageResponse[ArticleOut])
-@router.get("/recommended", response_model=PageResponse[ArticleOut])
+@router.get("/recommended/", response_model=List[ArticleOut])
+@router.get("/recommended", response_model=List[ArticleOut])
 async def get_recommended_article(
     limit: int = Query(default=3, ge=1, description='推荐新闻数量'),
     session: AsyncSession = Depends(get_session)
 ):
     service = ArticleService(session)
     result = await service.get_recommended(limit)
-    return PageResponse(
-        data=[ArticleOut.model_validate(a) for a in result.data],
-        total=result.total,
-        page=result.page,
-        page_size=result.page_size
-    )
+    return result
 
 @router.get("/detail/{slug}/", response_model=ArticleDetailOut)
 @router.get("/detail/{slug}", response_model=ArticleDetailOut)

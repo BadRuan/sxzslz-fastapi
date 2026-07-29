@@ -1,7 +1,8 @@
 from typing import List, Optional
 from sqlmodel import select, update, func, desc
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.model import Image, PageResponse
+from app.model import Image
+from app.schema import PageResponse
 
 
 class ImageCrud:
@@ -26,8 +27,9 @@ class ImageCrud:
         return PageResponse(
             total=total_count,
             page=page,
+            has_next=False,
             page_size=page_size,
-            items=items
+            data=items
         )
     
     async def get_by_slug(self, slugname: str) -> Optional[Image]:

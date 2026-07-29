@@ -3,10 +3,10 @@ from os import path, makedirs, remove
 from pathlib import Path
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.settings import upload_dir
-from app.model import Image, PageResponse
+from app.model import Image
 from app.dao import ImageCrud
 from app.utils import generate_webp_images
-
+from app.schema import PageResponse
 
 class ImageService:
     def __init__(self, session: AsyncSession) -> None:

@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.model import Article
 from app.dao import ArticleCrud, CategoryCrud
@@ -13,7 +13,7 @@ class ArticleService:
     async def create(self, article: Article) -> Article:
         return await self.crud.create(article)
     
-    async def get_recommended(self, limit: int) -> PageResponse:
+    async def get_recommended(self, limit: int) -> List[Article]:
         return await self.crud.get_recommended(limit)
     
     async def get_articles_by_category(self, category_id: int, page_size: int) -> PageResponse:  
@@ -23,8 +23,9 @@ class ArticleService:
             data=[],
             total=0,
             page=1,
+            has_next=False,
             page_size=0
-            )
+        )
         else:
             return await self.crud.get_articles_by_category(category_id, page_size)
 

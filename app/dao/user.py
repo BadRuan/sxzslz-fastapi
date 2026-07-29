@@ -1,8 +1,8 @@
+from typing import List
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlmodel import select, func
+from sqlmodel import select
 from argon2 import PasswordHasher
 from app.model import User
-from app.schema import PageResponse
 
 ph = PasswordHasher(
     time_cost=3,       # 迭代次数
@@ -14,24 +14,10 @@ class UserCrud:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_by_page(self, page: int, page_size: int) -> PageResponse:
-        count_stmt = select(func.count(User.id)).select_from(User)  # type: ignore[arg-type]
-        total = await self.session.exec(count_stmt)
-        total_count: int = total.one()
-        
-        offset = (page - 1) * page_size
-        
+    async def list_all(self) -> List[User]:
         data_stmt = (
             select(User)
-            .offset(offset)
-            .limit(page_size)
             .order_by(User.id)  # type: ignore[arg-type]
         )
         result = await self.session.exec(data_stmt)
-        users = list(result.all())
-        return PageResponse(
-            data=users,
-            total=total_count,
-            page=page,
-            page_size=page_size
-        )
+        return list(result.all())

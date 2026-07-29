@@ -1,12 +1,13 @@
+from typing import List
 from sqlmodel.ext.asyncio.session import AsyncSession
+from app.model import Category
 from app.dao import CategoryCrud
-from app.schema import PageResponse
 
 
 class CategoryService:
     def __init__(self, session: AsyncSession) -> None:
         self.crud = CategoryCrud(session)
     
-    async def get_all(self) -> PageResponse:
-        return await self.crud.get_all()
+    async def list_all(self) -> List[Category]:
+        return await self.crud.list_all()
     

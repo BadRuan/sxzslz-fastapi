@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select, desc, func, update
@@ -15,7 +15,7 @@ class ArticleCrud:
         await self.session.flush()
         return article
 
-    async def get_recommended(self, limit: int) -> PageResponse:
+    async def get_recommended(self, limit: int) -> List[Article]:
         stmt = (
             select(Article)
             .where(Article.is_recommended == True, Article.is_public == True)  # type: ignore[arg-type]
@@ -23,12 +23,7 @@ class ArticleCrud:
             .limit(limit)
         )
         result = await self.session.exec(stmt)
-        return PageResponse(
-            data=list(result.all()),
-            total=limit,
-            page=1,
-            page_size=limit
-            )
+        return list(result)
 
     async def get_articles_by_category(self, category_id: int, page_size: int) -> PageResponse:
         stmt = (
@@ -47,8 +42,9 @@ class ArticleCrud:
             data=result_list,
             total=length,
             page=1,
+            has_next=False,
             page_size=page_size
-            )
+        )
 
     async def get_detail_by_slug(self, article_slug: str) -> Optional[Article]:
         """根据 slug 获取文章详情"""
