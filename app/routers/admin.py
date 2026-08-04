@@ -1,7 +1,9 @@
-from fastapi import APIRouter, Depends
+from typing import List
+from fastapi import APIRouter, Depends, Query
 from sqlmodel.ext.asyncio.session import AsyncSession
+from app.schema import CountOut, ArticleOut
 from app.database import get_session
-from app.service.admin import AdminService, CountOut
+from app.service.admin import AdminService
 
 router = APIRouter()
 
@@ -9,4 +11,11 @@ router = APIRouter()
 async def get_base(session: AsyncSession = Depends(get_session)):
     service = AdminService(session)
     result = await service.get_count_info()
+    return result
+
+@router.get("/latest/", response_model=List[ArticleOut])
+@router.get("/latest", response_model=List[ArticleOut])
+async def get_latest(limit: int = Query(default=20, ge=1, description='最近文章数量'),session: AsyncSession = Depends(get_session)):
+    service = AdminService(session)
+    result = await service.get_latest(limit)
     return result

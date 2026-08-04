@@ -25,6 +25,16 @@ class ArticleCrud:
         result = await self.session.exec(stmt)
         return list(result)
 
+    async def get_admin_latest(self, limit: int) -> List[Article]:
+        stmt = (
+            select(Article)
+            .where(Article.is_public == True)  # type: ignore[arg-type]
+            .order_by(desc(Article.create_at))
+            .limit(limit)
+        )
+        result = await self.session.exec(stmt)
+        return list(result)
+
     async def get_articles_by_category(self, category_id: int, page: int = 1, page_size: int = 20) -> PageResponse:
         # 计算偏移量
         offset = (page - 1) * page_size

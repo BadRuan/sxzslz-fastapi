@@ -1,16 +1,8 @@
+from typing import List
 from sqlmodel.ext.asyncio.session import AsyncSession
-from pydantic import BaseModel
+from app.model import Article
+from app.schema import CountOut
 from app.dao import UserCrud, ArticleCrud, ImageCrud, DocumentCrud
-
-class CountOut(BaseModel):
-    total_article: int
-    month_article: int
-    image_count: int
-    attachment_count: int
-    user_count: int
-    article_view: int
-    image_view: int
-    download_count: int
 
 
 class AdminService:
@@ -32,3 +24,5 @@ class AdminService:
             download_count= await self.document_curd.get_download_count()
         )
         
+    async def get_latest(self, limit: int) -> List[Article]:
+        return await self.aritcle_crud.get_admin_latest(limit)

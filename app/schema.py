@@ -1,4 +1,5 @@
-from typing import Dict, List, TypeVar, Generic
+from typing import Dict, List, TypeVar, Generic, Optional
+from datetime import datetime
 from math import ceil
 from pydantic import BaseModel, Field
 from fastapi import Query
@@ -31,3 +32,42 @@ def pagination(cur_page: int, page_size: int, total_size: int) -> Dict:
         "total_size": total_size,
         "total_pages": total_pages,
     }
+
+class ArticleOut(BaseModel):
+    slug: str
+    cover_img: str
+    title: str
+    category_id: int
+    user_id: int
+    view_count: int
+    is_public: bool
+    is_recommended: bool
+    create_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class ArticleDetailOut(BaseModel):
+    slug: str
+    cover_img: str
+    title: str
+    content: Optional[str]
+    category_id: int
+    user_id: int
+    view_count: int
+    is_public: bool
+    is_recommended: bool
+    create_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class CountOut(BaseModel):
+    total_article: int
+    month_article: int
+    image_count: int
+    attachment_count: int
+    user_count: int
+    article_view: int
+    image_view: int
+    download_count: int

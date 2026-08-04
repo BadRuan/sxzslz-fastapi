@@ -1,12 +1,11 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
-from datetime import datetime
 from typing import Optional, List
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.database import get_session
 from app.model import Article
 from app.service import ArticleService
-from app.schema import PageResponse
+from app.schema import PageResponse, ArticleDetailOut, ArticleOut
 
 router = APIRouter()
 
@@ -18,35 +17,6 @@ class ArticleCreate(BaseModel):
     user_id: int
     is_public: bool = True
     is_recommended: bool = False
-
-class ArticleOut(BaseModel):
-    slug: str
-    cover_img: str
-    title: str
-    category_id: int
-    user_id: int
-    view_count: int
-    is_public: bool
-    is_recommended: bool
-    create_at: datetime
-
-    class Config:
-        from_attributes = True
-
-class ArticleDetailOut(BaseModel):
-    slug: str
-    cover_img: str
-    title: str
-    content: Optional[str]
-    category_id: int
-    user_id: int
-    view_count: int
-    is_public: bool
-    is_recommended: bool
-    create_at: datetime
-
-    class Config:
-        from_attributes = True
 
 @router.post("/", response_model=ArticleDetailOut, status_code=201)
 async def create_article(
