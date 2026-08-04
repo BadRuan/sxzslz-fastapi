@@ -1,6 +1,6 @@
 from typing import List
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlmodel import select
+from sqlmodel import select, func
 from argon2 import PasswordHasher
 from app.model import User
 
@@ -21,3 +21,8 @@ class UserCrud:
         )
         result = await self.session.exec(data_stmt)
         return list(result.all())
+    
+    async def get_total_count(self) -> int:
+        return (await self.session.scalar(
+            func.count(User.id)  # type: ignore[arg-type]
+        )) or 0

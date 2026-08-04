@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from uvicorn import run
 from app.database import init_db
-from app.routers import baseinfo_router, article_router, image_router, document_router
+from app.routers import baseinfo_router, article_router, image_router, document_router, admin_router
 
 
 @asynccontextmanager
@@ -31,6 +31,7 @@ app.include_router(baseinfo_router, tags=['基础信息模块'])
 app.include_router(article_router, prefix='/article', tags=['文章模块'])
 app.include_router(image_router, prefix='/image', tags=['图片模块'])
 app.include_router(document_router, prefix='/document', tags=['文件模块'])
+app.include_router(admin_router, prefix='/admin', tags=['后台管理模块'])
 
 
 if __name__ == '__main__':

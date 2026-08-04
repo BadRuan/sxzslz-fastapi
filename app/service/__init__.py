@@ -3,6 +3,7 @@ from .category import CategoryService
 from .article import ArticleService
 from .image import ImageService
 from .document import DocumentService
+from .admin import AdminService
 
 
 __all__ = [
@@ -10,5 +11,6 @@ __all__ = [
     'CategoryService',
     'ArticleService',
     'ImageService',
-    'DocumentService'
+    'DocumentService',
+    'AdminService'
 ]

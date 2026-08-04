@@ -66,3 +66,13 @@ class DocumentCrud:
             await self.session.commit()
             return True
         return False
+
+    async def get_total_count(self) -> int:
+        return (await self.session.scalar(
+            func.count(Document.id)  # type: ignore[arg-type]
+        )) or 0
+    
+    async def get_download_count(self) -> int:
+            return (await self.session.scalar(
+                func.count(Document.view)  # type: ignore[arg-type]
+            )) or 0

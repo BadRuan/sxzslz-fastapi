@@ -96,3 +96,8 @@ class ArticleCrud:
                 Article.create_at >= start_of_month  # type: ignore[arg-type]
             )
         )) or 0
+
+    async def get_total_view(self) -> int:
+        return (await self.session.scalar(
+                    func.sum(Article.view_count)  # type: ignore[arg-type]
+                )) or 0
