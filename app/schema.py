@@ -71,3 +71,10 @@ class CountOut(BaseModel):
     article_view: int
     image_view: int
     download_count: int
+
+class CategoryDetail(BaseModel):
+    id: int
+    name: str
+    article_count: int
+    view_count: int
+    

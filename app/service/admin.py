@@ -1,12 +1,13 @@
 from typing import List
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.model import Article
-from app.schema import CountOut
-from app.dao import UserCrud, ArticleCrud, ImageCrud, DocumentCrud
+from app.model import Article, Category
+from app.schema import CountOut, CategoryDetail
+from app.dao import UserCrud, CategoryCrud, ArticleCrud, ImageCrud, DocumentCrud
 
 
 class AdminService:
     def __init__(self, session: AsyncSession) -> None:
+        self.category_crud = CategoryCrud(session)
         self.user_crud = UserCrud(session)
         self.aritcle_crud = ArticleCrud(session)
         self.image_crud = ImageCrud(session)
@@ -26,3 +27,13 @@ class AdminService:
         
     async def get_latest(self, limit: int) -> List[Article]:
         return await self.aritcle_crud.get_admin_latest(limit)
+
+    async def get_category_info(self) -> List[CategoryDetail]:
+        categories:List[Category] = await self.category_crud.list_all()
+        target_result: List[CategoryDetail] = []
+        for category in categories:
+            article_count, view_count = await self.aritcle_crud.query_count_and_views(category.id)
+            target_result.append(
+                CategoryDetail(id=category.id, name=category.name, article_count=article_count, view_count=view_count)
+            )
+        return target_result

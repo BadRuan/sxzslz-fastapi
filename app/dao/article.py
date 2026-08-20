@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from datetime import datetime
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select, desc, func, update
@@ -111,3 +111,15 @@ class ArticleCrud:
         return (await self.session.scalar(
                     func.sum(Article.view_count)  # type: ignore[arg-type]
                 )) or 0
+    
+    async def query_count_and_views(self, cateogry_id: int) -> Tuple:
+        count: int = await self.session.scalar(
+            select(func.count(Article.id))  # type: ignore[arg-type]
+            .where(Article.category_id == cateogry_id)
+        ) or 0
+        view: int = await self.session.scalar(
+            select(func.sum(Article.view_count))
+            .where(Article.category_id == cateogry_id)
+        ) or 0
+        return count, view
+        
