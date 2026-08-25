@@ -1,9 +1,10 @@
 from typing import List
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
 from pydantic import BaseModel
 from app.database import get_session
-from app.service import UserService, CategoryService
+from app.service import UserService, CategoryService, ArticleService
+from app.schema import ProfileOut
 
 router = APIRouter()
 
@@ -53,3 +54,17 @@ async def get_base(session: AsyncSession = Depends(get_session)):
         "user": filtered_users,
         "category": category_list
     }
+
+
+@router.get('/profile/{id}', response_model=ProfileOut)
+@router.get('/profile/{id}/', response_model=ProfileOut)
+async def get_profile(id: int, session: AsyncSession = Depends(get_session)):
+    if id <= 0:
+        raise HTTPException(status_code=404, detail="用户id不存在")
+    article_service = ArticleService(session)
+    result = await article_service.get_profile(id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="文章不存在")
+    else:
+        article_count, view_count, article_list = result
+        return ProfileOut(post_count=article_count, view_count=view_count, latest_article=article_list)

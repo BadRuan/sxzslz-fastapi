@@ -78,3 +78,7 @@ class CategoryDetail(BaseModel):
     article_count: int
     view_count: int
     
+class ProfileOut(BaseModel):
+    post_count: int
+    view_count: int
+    latest_article: List[ArticleOut]

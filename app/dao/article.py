@@ -123,3 +123,20 @@ class ArticleCrud:
         ) or 0
         return count, view
         
+    async def get_user_article_and_view_count(self, user_id: int) -> Tuple:
+        article_count: int = await self.session.scalar(
+            select(func.count(Article.id))  # type: ignore[arg-type]
+            .where(Article.user_id == user_id)
+        ) or 0
+        view_count: int = await self.session.scalar(
+                    select(func.sum(Article.view_count))  # type: ignore[arg-type]
+                    .where(Article.user_id == user_id)
+                ) or 0
+        result = await self.session.exec((
+            select(Article)
+            .where(Article.user_id == user_id, Article.is_public == True)  # type: ignore[arg-type]
+            .order_by(desc(Article.create_at))
+            .limit(30)
+        ))
+        article_list: List[Article] = list(result)
+        return article_count, view_count, article_list
