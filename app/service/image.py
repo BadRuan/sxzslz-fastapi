@@ -52,7 +52,7 @@ class ImageService:
     async def get_by_slug(self, slugname: str) -> Optional[Image]:
         image: Optional[Image] = await self.crud.get_by_slug(slugname)
         if image is not None:
-            await self.crud.recoder_view(slugname)
+            await self.crud.record_view(slugname)
             await self.crud.session.refresh(image)
             return image
         else:

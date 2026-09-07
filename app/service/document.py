@@ -46,7 +46,7 @@ class DocumentService:
     async def get_by_slug(self, slugname: str) -> Optional[Document]:
         document: Optional[Document] = await self.crud.get_by_slug(slugname)
         if document is not None:
-            await self.crud.recoder_view(slugname)
+            await self.crud.record_view(slugname)
             await self.crud.session.refresh(document)
             return document
         else:

@@ -1,8 +1,9 @@
-from typing import List
+from typing import List, Optional
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select, func
 from argon2 import PasswordHasher
 from app.model import User
+from app.schema import UserOut
 
 ph = PasswordHasher(
     time_cost=3,       # 迭代次数
@@ -14,7 +15,7 @@ class UserCrud:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_all(self) -> List[User]:
+    async def list_all_user(self) -> List[User]:
         data_stmt = (
             select(User)
             .order_by(User.id)  # type: ignore[arg-type]
@@ -26,3 +27,11 @@ class UserCrud:
         return (await self.session.scalar(
             func.count(User.id)  # type: ignore[arg-type]
         )) or 0
+    
+    async def get_by_user_id(self, id: int) -> Optional[UserOut]:
+        stmt = (
+            select(User)
+            .where(User.id == id)
+        )
+        result = await self.session.exec(stmt)
+        return UserOut.model_validate(result.first())

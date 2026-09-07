@@ -12,7 +12,7 @@ engine = create_async_engine(
     )
 
 
-# @asynccontextmanager
+@asynccontextmanager
 async def get_session():
     async with AsyncSession(engine) as session:
         try:

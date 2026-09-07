@@ -1,7 +1,7 @@
-from typing import Dict
+from typing import List, Optional
 from datetime import datetime
 from uuid import uuid4
-from sqlmodel import SQLModel, Field
+from sqlmodel import SQLModel, Field, Relationship
 
 
 def generate_slug() -> str:
@@ -10,44 +10,19 @@ def generate_slug() -> str:
 
 
 class Article(SQLModel, table=True):
-    __tablename__: str = "articles"
+    __tablename__: str = "article"
 
-    # 编号
-    id: int = Field(primary_key=True, default=None)  # type: ignore[arg-type]
-    # 唯一url
+    id: int = Field(primary_key=True, default=None)
     slug: str = Field(unique=True, default_factory=generate_slug)
-    # 封面图片
-    cover_img: str = Field(nullable=True)
-    # 标题
+    cover_img_slug: Optional[str] = Field(default=None, nullable=True)
     title: str = Field(nullable=False)
-    # 内容
-    content: str = Field(nullable=True)
-    # 分类id
-    category_id: int = Field(nullable=False)
-    # 作者id
-    user_id: int = Field(nullable=False)
-    # 发布时间
-    create_at: datetime = Field(default_factory=datetime.now)
-    # 是否公开
-    is_public: bool = Field(default=True)
-    # 是否推荐
+    content: Optional[str] = Field(default=None, nullable=True)
+    user_id: int = Field(foreign_key="user.id")
+    # 状态：0草稿 1已发布 2下线
+    status: int = Field(default=1)
     is_recommended: bool = Field(default=False)
-    # 阅读量
     view_count: int = Field(default=0)
+    like_count: int = Field(default=0)
+    create_at: datetime = Field(default_factory=datetime.now)
 
-    
-    def __repr__(self) -> str:
-        return f"<Article {self.title}>"
-
-    def to_dict(self) -> Dict:
-        return {
-            "id": self.id,
-            "slug": self.slug,
-            "cover_img": self.cover_img,
-            "title": self.title,
-            "is_public": self.is_public,
-            "is_recommended": self.is_recommended,
-            "view_count": self.view_count,
-            "create_at": self.create_at,
-            "content": self.content
-        }
+    category_links: List["ArticleCategory"] = Relationship(back_populates="article")

@@ -14,6 +14,16 @@ dependencies = [
     "werkzeug>=3.1.8",
 ]
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
 [[tool.uv.index]]
 url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 default = true
+
+[dependency-groups]
+dev = [
+    "aiosqlite>=0.22.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]

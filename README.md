@@ -73,8 +73,9 @@ uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 启动后访问：
-- API 文档: http://localhost:8000/docs
-- ReDoc 文档: http://localhost:8000/redoc
+
+- API 文档: <http://localhost:8000/docs>
+- ReDoc 文档: <http://localhost:8000/redoc>
 
 ## API 接口
 
@@ -85,10 +86,12 @@ uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 | GET | `/user/` | 分页获取用户列表 |
 
 **请求参数**:
+
 - `page`: 页码（默认 1）
 - `page_size`: 每页条数（默认 10，最大 100）
 
 **响应示例**:
+
 ```json
 {
     "data": [
@@ -110,7 +113,7 @@ uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ### 文章模块 `/article`
 
 | 方法 | 路径 | 说明 |
-|------|------|------|
+| ------ | ------ | ------ |
 | POST | `/article/` | 创建文章 |
 | GET | `/article/latest` | 获取最新文章 |
 | GET | `/article/recommended` | 获取推荐文章 |
@@ -118,6 +121,7 @@ uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 | GET | `/article/count` | 获取文章统计 |
 
 **创建文章请求体**:
+
 ```json
 {
     "title": "文章标题",
@@ -130,6 +134,7 @@ uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 **文章详情响应**:
+
 ```json
 {
     "slug": "a1b2c3d4e5f6g7h8",
@@ -145,6 +150,7 @@ uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 **文章统计响应**:
+
 ```json
 {
     "total": 100,
@@ -155,22 +161,25 @@ uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ## 数据模型
 
 ### User
+
 | 字段 | 类型 | 说明 |
-|------|------|------|
+| ------ | ------ | ------ |
 | id | int | 主键 |
 | username | str | 用户名（唯一） |
 | nickname | str | 昵称（唯一） |
 | password | str | 密码（Argon2 加密） |
 
 ### Category
+
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | str | 主键 |
 | name | str | 分类名称（唯一） |
 
 ### Article
+
 | 字段 | 类型 | 说明 |
-|------|------|------|
+| ------ | ------ | ------ |
 | id | int | 主键 |
 | slug | str | URL 唯一标识（自动生成） |
 | title | str | 标题 |

@@ -8,14 +8,14 @@ from app.schema import PageResponse
 class DocumentCrud:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
-        
+
     async def list_paginated(self, page: int, page_size: int) -> PageResponse[Document]:
         count_stmt = select(func.count()).select_from(Document)
         total = await self.session.exec(count_stmt)
         total_count: int = total.one()
-        
+
         offset = (page - 1) * page_size
-        
+
         data_stmt = (
             select(Document)
             .offset(offset)
@@ -23,7 +23,7 @@ class DocumentCrud:
             .order_by(desc(Document.view))
         )
         results = await self.session.exec(data_stmt)
-        items: List[Image] = list(results.all()) # type: ignore
+        items: List[Document] = list(results.all())
         return PageResponse(
             total=total_count,
             page=page,
@@ -31,48 +31,44 @@ class DocumentCrud:
             page_size=page_size,
             data=items
         )
-    
+
     async def get_by_slug(self, slugname: str) -> Optional[Document]:
         stmt = select(Document).where(Document.slug == slugname)
         result = await self.session.exec(stmt)
-        document = result.first()
-        return document
-    
-    
-    async def add(self, raw_filename: str, slug: str, mime_type: str, size: int) -> Optional[Document]:
-        image_record = Document(
+        return result.first()
+
+    async def add(self, raw_filename: str, slug: str, mime_type: str, size: int) -> Document:
+        document_record = Document(
             raw_filename=raw_filename,
             slug=slug,
             mime_type=mime_type,
             size_bytes=size
         )
-        item = self.session.add(image_record) 
-        await self.session.commit()
-        return item
-    
-    async def recoder_view(self, slugname: str) -> None:
+        self.session.add(document_record)
+        await self.session.flush()
+        return document_record
+
+    async def record_view(self, slugname: str) -> None:
         stmt = (
             update(Document)
-            .where(Document.slug == slugname) # type: ignore
-            .values({Document.view: Document.view + 1})
+            .where(Document.slug == slugname)
+            .values(view=Document.view + 1)
         )
         await self.session.exec(stmt)
-        await self.session.commit()
-    
+
     async def remove_by_slug(self, slugname: str) -> bool:
-        image = await self.get_by_slug(slugname)
-        if image is not None:
-            await self.session.delete(image)
-            await self.session.commit()
+        document = await self.get_by_slug(slugname)
+        if document is not None:
+            await self.session.delete(document)
             return True
         return False
 
     async def get_total_count(self) -> int:
         return (await self.session.scalar(
-            func.count(Document.id)  # type: ignore[arg-type]
+            func.count(Document.id)
         )) or 0
-    
+
     async def get_download_count(self) -> int:
-            return (await self.session.scalar(
-                func.count(Document.view)  # type: ignore[arg-type]
-            )) or 0
+        return (await self.session.scalar(
+            func.count(Document.view)
+        )) or 0

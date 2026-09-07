@@ -1,4 +1,4 @@
-from typing import Dict
+from uuid import uuid4
 from sqlmodel import SQLModel, Field
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, InvalidHash
@@ -9,10 +9,16 @@ ph = PasswordHasher(
     parallelism=4      # 并行线程数
 )
 
+def generate_slug() -> str:
+    """生成唯一的 slug"""
+    return uuid4().hex[:12]
+
+
 class User(SQLModel, table=True):
-    __tablename__: str = "users"
+    __tablename__: str = "user"
 
     id: int = Field(primary_key=True, default=None)  # type: ignore[arg-type]
+    slug: str = Field(unique=True, default_factory=generate_slug)
     # 用户名
     username: str = Field(unique=True, nullable=False)
     # 昵称
@@ -31,13 +37,3 @@ class User(SQLModel, table=True):
             return True
         except (VerifyMismatchError, InvalidHash):
             return False
-
-    def __repr__(self) -> str:
-        return f"<User {self.nickname}>"
-
-    def to_dict(self) -> Dict:
-        return {
-            "id": self.id,
-            "username": self.username,
-            "nickname": self.nickname
-        }

@@ -1,14 +1,7 @@
-from .user import User
-from .category import Category
-from .article import Article
-from .image import Image
-from .document import Document
+from app.model.user import User
+from app.model.category import Category
+from app.model.article import Article
+from app.model.article_category import ArticleCategory
+from app.model.image import Image
+from app.model.document import Document
 
-
-__all__ = [
-    'User', 
-    'Category', 
-    'Article',
-    'Image',
-    'Document',
-    ]
