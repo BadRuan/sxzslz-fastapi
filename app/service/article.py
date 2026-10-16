@@ -19,7 +19,7 @@ class ArticleService:
             user_id=settings.DEFAULT_USER_ID,
             category_ids=data.category_ids,
         )
-        article = await self.crud.get_by_id(article.id)
+        article = await self.crud.get_by_slug(article.slug)
         return ArticleDetailOut.model_validate(article)
 
     async def list_paginated(
@@ -35,24 +35,18 @@ class ArticleService:
             has_next=page * page_size < total,
         )
 
-    async def get(self, article_id: int) -> Optional[ArticleDetailOut]:
-        article = await self.crud.get_by_id(article_id)
-        if article is None:
-            return None
-        return ArticleDetailOut.model_validate(article)
-
     async def get_by_slug(self, slug: str) -> Optional[ArticleDetailOut]:
         article = await self.crud.get_by_slug(slug)
         if article is None:
             return None
         return ArticleDetailOut.model_validate(article)
 
-    async def update(self, article_id: int, data: ArticleUpdate) -> Optional[ArticleDetailOut]:
-        article = await self.crud.update(article_id, **data.model_dump(exclude_unset=True))
+    async def update(self, slug: str, data: ArticleUpdate) -> Optional[ArticleDetailOut]:
+        article = await self.crud.update(slug, **data.model_dump(exclude_unset=True))
         if article is None:
             return None
-        article = await self.crud.get_by_id(article_id)
+        article = await self.crud.get_by_slug(slug)
         return ArticleDetailOut.model_validate(article)
 
-    async def delete(self, article_id: int) -> bool:
-        return await self.crud.soft_delete(article_id)
+    async def delete(self, slug: str) -> bool:
+        return await self.crud.soft_delete(slug)

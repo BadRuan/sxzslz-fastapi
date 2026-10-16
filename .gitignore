@@ -11,3 +11,4 @@ wheels/
 .venv
 .codegraph
 .claude/
+.superpowers/

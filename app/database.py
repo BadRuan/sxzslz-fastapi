@@ -29,4 +29,9 @@ async def init_db() -> None:
         # create_all 不会为已存在的表新增列，这里幂等地补齐软删除字段
         await conn.execute(text("ALTER TABLE article ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE"))
         await conn.execute(text("ALTER TABLE category ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE"))
+        # name/slug 唯一性从全表唯一改为「仅活跃行」部分索引，软删后允许复用
+        await conn.execute(text("ALTER TABLE category DROP CONSTRAINT IF EXISTS category_name_key"))
+        await conn.execute(text("ALTER TABLE category DROP CONSTRAINT IF EXISTS category_slug_key"))
+        await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_category_name ON category (name) WHERE NOT is_deleted"))
+        await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_category_slug ON category (slug) WHERE NOT is_deleted"))
     

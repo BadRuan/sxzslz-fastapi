@@ -1,4 +1,5 @@
 from typing import List, Optional
+from sqlalchemy.exc import IntegrityError
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.dao import CategoryCrud
 from app.schema import CategoryCreate, CategoryUpdate, CategoryOut
@@ -13,9 +14,13 @@ class CategoryService:
             raise ValueError("分类名称已存在")
         if await self.crud.get_by_slug(data.slug):
             raise ValueError("分类 slug 已存在")
-        category = await self.crud.create(
-            name=data.name, slug=data.slug, parent_id=data.parent_id, sort=data.sort
-        )
+        try:
+            category = await self.crud.create(
+                name=data.name, slug=data.slug, parent_id=data.parent_id, sort=data.sort
+            )
+        except IntegrityError as e:
+            # 校验通过后并发插入造成的唯一性冲突 → 400 而非 500
+            raise ValueError("分类名称或 slug 已存在") from e
         return CategoryOut.model_validate(category)
 
     async def list(self) -> List[CategoryOut]:
@@ -37,7 +42,12 @@ class CategoryService:
             existing = await self.crud.get_by_slug(data.slug)
             if existing is not None and existing.id != category_id:
                 raise ValueError("分类 slug 已存在")
-        category = await self.crud.update(category_id, **data.model_dump(exclude_unset=True))
+        try:
+            category = await self.crud.update(
+                category_id, **data.model_dump(exclude_unset=True)
+            )
+        except IntegrityError as e:
+            raise ValueError("分类名称或 slug 已存在") from e
         if category is None:
             return None
         return CategoryOut.model_validate(category)

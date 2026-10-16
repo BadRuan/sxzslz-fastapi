@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, List, Optional
 from datetime import datetime
 from uuid import uuid4
 from sqlmodel import SQLModel, Field, Relationship
+from sqlalchemy import Index, text
 from sqlalchemy.orm import foreign
 if TYPE_CHECKING:
     from app.model.user import User
@@ -19,8 +20,9 @@ class Category(SQLModel, table=True):
     __tablename__: str = "category"
 
     id: int = Field(primary_key=True, default=None)
-    name: str = Field(unique=True, nullable=False)
-    slug: str = Field(unique=True, nullable=False)
+    # name/slug 唯一性由下方部分索引约束（仅活跃行），软删后可复用
+    name: str = Field(nullable=False)
+    slug: str = Field(nullable=False)
     parent_id: int = Field(default=0)
     # 层级路径，如 /1/3/7/
     path: str = Field(nullable=False)
@@ -29,7 +31,20 @@ class Category(SQLModel, table=True):
     # 排序值，越小越靠前
     sort: int = Field(default=0, nullable=False)
     is_deleted: bool = Field(default=False)
-    
+
+    __table_args__ = (
+        Index(
+            "uq_category_name", "name", unique=True,
+            postgresql_where=text("NOT is_deleted"),
+            sqlite_where=text("NOT is_deleted"),
+        ),
+        Index(
+            "uq_category_slug", "slug", unique=True,
+            postgresql_where=text("NOT is_deleted"),
+            sqlite_where=text("NOT is_deleted"),
+        ),
+    )
+
     articles: List['Article'] = Relationship(
         back_populates="categories",
         sa_relationship_kwargs= {

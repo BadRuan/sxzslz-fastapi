@@ -17,7 +17,7 @@ async def test_create_article_with_categories(session, default_user):
         category_ids=[cat.id],
     )
     assert article.id is not None
-    loaded = await crud.get_by_id(article.id)
+    loaded = await crud.get_by_slug(article.slug)
     assert loaded is not None
     assert loaded.title == "标题"
     assert [c.id for c in loaded.categories] == [cat.id]
@@ -77,15 +77,34 @@ async def test_list_paginated_filter_category(session, default_user):
     assert items[0].title == "在A"
 
 
+async def test_list_paginated_no_duplicate_when_in_parent_and_child(session, default_user):
+    """文章同时挂在父分类与子分类时，按父分类过滤不应出现重复行"""
+    cat_crud = CategoryCrud(session)
+    parent = await cat_crud.create(name="父2", slug="p2", parent_id=0, sort=0)
+    child = await cat_crud.create(name="子2", slug="c2", parent_id=parent.id, sort=0)
+
+    crud = ArticleCrud(session)
+    await crud.create(
+        title="双挂", content=None, cover_img_slug=None,
+        is_hidden=False, is_recommended=False,
+        user_id=default_user.id, category_ids=[parent.id, child.id],
+    )
+
+    items, total = await crud.list_paginated(page=1, page_size=10, category_id=parent.id)
+    assert total == 1
+    assert len(items) == 1
+
+
 async def test_soft_delete(session, default_user):
     crud = ArticleCrud(session)
     article = await crud.create(
         title="x", content=None, cover_img_slug=None,
         is_hidden=False, is_recommended=False, user_id=default_user.id, category_ids=[],
     )
-    assert await crud.soft_delete(article.id) is True
-    assert await crud.get_by_id(article.id) is None
-    assert await crud.soft_delete(article.id) is False
+    slug = article.slug
+    assert await crud.soft_delete(slug) is True
+    assert await crud.get_by_slug(slug) is None
+    assert await crud.soft_delete(slug) is False
 
 
 async def test_list_paginated_subtree_filter(session, default_user):
@@ -126,6 +145,45 @@ async def test_list_paginated_subtree_filter(session, default_user):
     items, total = await crud.list_paginated(page=1, page_size=10, category_id=999)
     assert total == 0
     assert items == []
+
+
+async def test_list_paginated_filter_deleted_category(session, default_user):
+    """按已软删的分类过滤应返回空，视同分类不存在"""
+    cat_crud = CategoryCrud(session)
+    cat = await cat_crud.create(name="将删", slug="will-del", parent_id=0, sort=0)
+
+    crud = ArticleCrud(session)
+    await crud.create(
+        title="文章", content=None, cover_img_slug=None,
+        is_hidden=False, is_recommended=False,
+        user_id=default_user.id, category_ids=[cat.id],
+    )
+    await cat_crud.soft_delete(cat.id)
+
+    items, total = await crud.list_paginated(page=1, page_size=10, category_id=cat.id)
+    assert total == 0
+    assert items == []
+
+
+async def test_article_excludes_deleted_category(session, default_user):
+    """分类软删后，文章详情中不应再出现该分类"""
+    cat_crud = CategoryCrud(session)
+    cat = await cat_crud.create(name="隐藏分类", slug="hide-cat", parent_id=0, sort=0)
+
+    crud = ArticleCrud(session)
+    art = await crud.create(
+        title="T", content=None, cover_img_slug=None,
+        is_hidden=False, is_recommended=False,
+        user_id=default_user.id, category_ids=[cat.id],
+    )
+    slug = art.slug
+    await cat_crud.soft_delete(cat.id)
+    # 模拟新请求的新 session：强制重新加载关联
+    session.expire_all()
+
+    loaded = await crud.get_by_slug(slug)
+    assert loaded is not None
+    assert loaded.categories == []
 
 
 async def test_get_by_slug(session, default_user):

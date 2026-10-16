@@ -29,8 +29,8 @@ async def list_articles(
     return await service.list_paginated(page, page_size, category_id)
 
 
-@router.get("/detail/{slug}", response_model=ArticleDetailOut)
-async def get_article_by_slug(slug: str, session: AsyncSession = Depends(get_session)):
+@router.get("/{slug}", response_model=ArticleDetailOut)
+async def get_article(slug: str, session: AsyncSession = Depends(get_session)):
     service = ArticleService(session)
     article = await service.get_by_slug(slug)
     if article is None:
@@ -38,22 +38,13 @@ async def get_article_by_slug(slug: str, session: AsyncSession = Depends(get_ses
     return article
 
 
-@router.get("/{article_id}", response_model=ArticleDetailOut)
-async def get_article(article_id: int, session: AsyncSession = Depends(get_session)):
-    service = ArticleService(session)
-    article = await service.get(article_id)
-    if article is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")
-    return article
-
-
-@router.patch("/{article_id}", response_model=ArticleDetailOut)
+@router.patch("/{slug}", response_model=ArticleDetailOut)
 async def update_article(
-    article_id: int, data: ArticleUpdate, session: AsyncSession = Depends(get_session)
+    slug: str, data: ArticleUpdate, session: AsyncSession = Depends(get_session)
 ):
     service = ArticleService(session)
     try:
-        article = await service.update(article_id, data)
+        article = await service.update(slug, data)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     if article is None:
@@ -61,9 +52,9 @@ async def update_article(
     return article
 
 
-@router.delete("/{article_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_article(article_id: int, session: AsyncSession = Depends(get_session)):
+@router.delete("/{slug}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_article(slug: str, session: AsyncSession = Depends(get_session)):
     service = ArticleService(session)
-    if not await service.delete(article_id):
+    if not await service.delete(slug):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")
     return Response(status_code=status.HTTP_204_NO_CONTENT)

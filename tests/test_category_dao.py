@@ -33,6 +33,24 @@ async def test_soft_delete_filters_out(session):
     assert await crud.soft_delete(category.id) is False
 
 
+async def test_soft_delete_cascades_subtree(session):
+    """软删分类应级联软删其所有后代，保证树接口与平铺接口一致"""
+    crud = CategoryCrud(session)
+    a = await crud.create(name="A", slug="a", parent_id=0, sort=0)
+    b = await crud.create(name="B", slug="b", parent_id=a.id, sort=0)
+    c = await crud.create(name="C", slug="c", parent_id=b.id, sort=0)
+    d = await crud.create(name="D", slug="d", parent_id=0, sort=0)
+
+    assert await crud.soft_delete(b.id) is True
+
+    active_ids = {x.id for x in await crud.get_active_all()}
+    assert active_ids == {a.id, d.id}
+    c2 = await crud.get_raw_by_id(c.id)
+    assert c2.is_deleted is True
+    a2 = await crud.get_raw_by_id(a.id)
+    assert a2.is_deleted is False
+
+
 async def test_update_fields(session):
     crud = CategoryCrud(session)
     category = await crud.create(name="旧名", slug="old", parent_id=0, sort=0)

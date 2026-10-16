@@ -48,12 +48,18 @@ class CategoryCrud:
         return CategoryTree.model_validate(category)
 
     async def get_by_slug(self, slug: str) -> Optional[Category]:
-        stmt = select(Category).where(Category.slug == slug)
+        stmt = select(Category).where(
+            Category.slug == slug,
+            Category.is_deleted == False,  # noqa: E712
+        )
         result = await self.session.exec(stmt)
         return result.first()
 
     async def get_by_name(self, name: str) -> Optional[Category]:
-        stmt = select(Category).where(Category.name == name)
+        stmt = select(Category).where(
+            Category.name == name,
+            Category.is_deleted == False,  # noqa: E712
+        )
         result = await self.session.exec(stmt)
         return result.first()
 
@@ -132,6 +138,14 @@ class CategoryCrud:
         category = await self.get_raw_by_id(category_id)
         if category is None or category.is_deleted:
             return False
-        category.is_deleted = True
+        # 级联软删整棵子树，保证分类树接口与平铺接口行为一致
+        descendants = (await self.session.exec(
+            select(Category).where(
+                Category.path.like(f"{category.path}%"),
+                Category.is_deleted == False,  # noqa: E712
+            )
+        )).all()
+        for item in descendants:
+            item.is_deleted = True
         await self.session.flush()
         return True
