@@ -1,52 +1,60 @@
-from fastapi import APIRouter, Query, Depends, HTTPException
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.database import get_session
-from app.dao import CategoryCrud
 from app.service import ArticleService
+from app.schema import ArticleCreate, ArticleUpdate, ArticleOut, ArticleDetailOut, PageResponse
 
 
 router = APIRouter()
 
-@router.get("/category")
-@router.get("/category/")
-async def category(session: AsyncSession = Depends(get_session)):
-    category_dao = CategoryCrud(session)
-    categories = await category_dao.query_all()
-    return categories
 
-
-@router.get("/detail/{slug}/")
-@router.get("/detail/{slug}")
-async def get_detail(slug: str, session: AsyncSession = Depends(get_session)):
+@router.post("/", response_model=ArticleDetailOut, status_code=status.HTTP_201_CREATED)
+async def create_article(data: ArticleCreate, session: AsyncSession = Depends(get_session)):
     service = ArticleService(session)
-    article = await service.get_article(slug)
+    try:
+        return await service.create(data)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get("/", response_model=PageResponse[ArticleOut])
+async def list_articles(
+    page: int = Query(default=1, ge=1, description="页码"),
+    page_size: int = Query(default=20, ge=1, le=100, description="每页条数"),
+    category_id: Optional[int] = Query(default=None, ge=1, description="分类ID"),
+    session: AsyncSession = Depends(get_session),
+):
+    service = ArticleService(session)
+    return await service.list_paginated(page, page_size, category_id)
+
+
+@router.get("/{article_id}", response_model=ArticleDetailOut)
+async def get_article(article_id: int, session: AsyncSession = Depends(get_session)):
+    service = ArticleService(session)
+    article = await service.get(article_id)
     if article is None:
-        raise HTTPException(status_code=404, detail="文章不存在")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")
     return article
 
 
-@router.get("/list")
-@router.get("/list/")
-async def get_list(
-    category_id: int = Query(default=1, ge=1, description='文章分类'),
-    page: int = Query(default=1, ge=1, description='页码'),
-    page_size: int = Query(default=30, ge=1, description='每页数量'), session: AsyncSession = Depends(get_session)
+@router.patch("/{article_id}", response_model=ArticleDetailOut)
+async def update_article(
+    article_id: int, data: ArticleUpdate, session: AsyncSession = Depends(get_session)
 ):
     service = ArticleService(session)
-    result = await service.query_category_article(category_id, page, page_size)
-    if result is None:
-        raise HTTPException(status_code=404, detail="文章不存在")
-    else:
-        return result
+    try:
+        article = await service.update(article_id, data)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    if article is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")
+    return article
 
-@router.get("/recommended")
-@router.get("/recommended/")
-async def get_recommended(
-    limit: int = Query(default=10, ge=1), session: AsyncSession = Depends(get_session)
-):
+
+@router.delete("/{article_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_article(article_id: int, session: AsyncSession = Depends(get_session)):
     service = ArticleService(session)
-    result = await service.query_recommended_article(limit)
-    if result is None:
-        raise HTTPException(status_code=404, detail="推荐不存在")
-    else:
-        return result
+    if not await service.delete(article_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

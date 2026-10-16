@@ -1,73 +1,52 @@
-from typing import Optional, List
+from typing import Optional
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.model import Article, Category
-from app.dao import ArticleCrud, CategoryCrud, UserCrud, ArticleCategoryCrud
-from app.schema import ArticleDetailOut, ArticleOut, PageResponse, CategoryTree
+from app.settings import settings
+from app.dao import ArticleCrud
+from app.schema import ArticleCreate, ArticleUpdate, ArticleOut, ArticleDetailOut, PageResponse
 
 
 class ArticleService:
     def __init__(self, session: AsyncSession) -> None:
         self.crud = ArticleCrud(session)
-        self.user_crud = UserCrud(session)
-        self.category_curd = CategoryCrud(session)
-        self.article_category_crud = ArticleCategoryCrud(session)
 
-    async def get_article(self, article_slug: str) -> Optional[ArticleDetailOut]:
-        article: Optional[ArticleDetailOut] = await self.crud.query_detail_by_slug(article_slug)
+    async def create(self, data: ArticleCreate) -> ArticleDetailOut:
+        article = await self.crud.create(
+            title=data.title,
+            content=data.content,
+            cover_img_slug=data.cover_img_slug,
+            is_hidden=data.is_hidden,
+            is_recommended=data.is_recommended,
+            user_id=settings.DEFAULT_USER_ID,
+            category_ids=data.category_ids,
+        )
+        article = await self.crud.get_by_id(article.id)
+        return ArticleDetailOut.model_validate(article)
+
+    async def list_paginated(
+        self, page: int, page_size: int, category_id: Optional[int] = None
+    ) -> PageResponse[ArticleOut]:
+        items, total = await self.crud.list_paginated(page, page_size, category_id)
+        data = [ArticleOut.model_validate(a) for a in items]
+        return PageResponse(
+            data=data,
+            total=total,
+            page=page,
+            page_size=page_size,
+            has_next=page * page_size < total,
+        )
+
+    async def get(self, article_id: int) -> Optional[ArticleDetailOut]:
+        article = await self.crud.get_by_id(article_id)
         if article is None:
             return None
-        else:
-            await self.crud.increase_view_count(article_slug)
-            # 补充用户信息
-            article.user = await self.user_crud.get_by_user_id(article.user_id)
-            # 补充面包屑信息
-            article.primary_category = await self.article_category_crud.query_primary_by_article_id(article.id)
-            if article.primary_category is not None:
-                c = await self.category_curd.query_by_category_id(article.primary_category.category_id)
-                if c:
-                    article.primary_category.category_name = c.name
-            return article
-            
-    async def query_category_article(self, category_id: int, page: int = 1, limit: int = 10) -> PageResponse:
-        if category_id <= 0:
-            return PageResponse(
-                data=[], total=0, page=0, page_size=0, has_next=False
-            )
-        else:
-            offset = (page - 1) * limit
-            articles: List[Article] = await self.crud.query_category_article(category_id, offset, limit)
-            raw_categories: List[Category] = await self.category_curd.query_raw_all()
-            category: Optional[CategoryTree] = None
-            for c in raw_categories:
-                if c.id == category_id:
-                    category = CategoryTree.model_validate(c)
-            taget_articles: List[ArticleOut] = []
-            
-            for article in articles:
-                a: ArticleOut = ArticleOut.model_validate(article)
-                a.category = category
-                a.user = await self.user_crud.get_by_user_id(article.user_id)
-                taget_articles.append(a)
-            total_count: int = await self.crud.count_category_article(category_id)
-            return PageResponse(
-                data=taget_articles, 
-                total= total_count, 
-                page=page, 
-                page_size=limit, 
-                has_next= (offset + limit) < total_count
-            )
-            
-    async def query_recommended_article(self, limit: int = 10) -> List[ArticleOut]:
-        articles: List[Article] = await self.crud.query_recommended_article(limit)
-        recommend_article: List[ArticleOut] = []
-        categries: List[Category] = await self.category_curd.query_raw_all()
-        for a in articles:
-            target: ArticleOut = ArticleOut.model_validate(a)
-            article_category = await self.article_category_crud.query_primary_by_article_id(a.id)
-            if article_category:
-                for c in categries:
-                    if c.id == article_category.category_id:    
-                        target.category = CategoryTree.model_validate(c)
-                        target.user = await self.user_crud.get_by_user_id(a.user_id)
-            recommend_article.append(target)
-        return recommend_article
+        return ArticleDetailOut.model_validate(article)
+
+    async def update(self, article_id: int, data: ArticleUpdate) -> Optional[ArticleDetailOut]:
+        article = await self.crud.update(article_id, **data.model_dump(exclude_unset=True))
+        if article is None:
+            return None
+        article = await self.crud.get_by_id(article_id)
+        return ArticleDetailOut.model_validate(article)
+
+    async def delete(self, article_id: int) -> bool:
+        return await self.crud.soft_delete(article_id)

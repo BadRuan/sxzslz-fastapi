@@ -1,23 +1,34 @@
 import pytest
-import pytest_asyncio
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-# 导入所有模型，让 SQLModel.metadata 注册表
-from app.model import User, Category, Article, ArticleCategory, Image, Document
+from app.model import User, Article, Category, ArticleCategory, Image, Document  # noqa: F401
 
 
-@pytest_asyncio.fixture
-async def session():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+@pytest.fixture
+async def engine():
+    engine = create_async_engine(
+        "sqlite+aiosqlite://",
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+    yield engine
+    await engine.dispose()
 
+
+@pytest.fixture
+async def session(engine):
     async with AsyncSession(engine) as session:
         yield session
 
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.drop_all)
-    await engine.dispose()
+
+@pytest.fixture
+async def default_user(session):
+    user = User(username="admin", nickname="管理员", password="test")
+    session.add(user)
+    await session.flush()
+    return user

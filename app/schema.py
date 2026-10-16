@@ -1,19 +1,8 @@
 from typing import List, TypeVar, Generic, Optional
 from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict
-from fastapi import Query
 
 T = TypeVar("T")
-
-class PaginationParams:
-    def __init__(
-        self,
-        page: int = Query(1, ge=1, description="页码，从1开始"),
-        size: int = Query(20, ge=1, le=100, description="每页条数，最大100")
-    ) -> None:
-        self.page = page
-        self.size = size
-        self.offset = (page - 1) * size
 
 class PageResponse(BaseModel, Generic[T]):
     data: List[T] = Field(default_factory=list, description="当前页数据列表")
@@ -40,50 +29,77 @@ class CategoryTree(BaseModel):
     sort: int
     children: List["CategoryTree"] = []
 
-class ArticleCategoryOut(BaseModel):
+class CategoryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
-    article_id: int
-    category_id: int
-    is_primary: int
-    category_name: Optional[str] = ''
-
-
-class UserCount(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    
+    name: str
     slug: str
-    nickname: str
-
+    parent_id: int
+    path: str
+    level: int
+    sort: int
 
 class ArticleOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
           
+    id: int
     slug: str
-    cover_img_slug: str
+    cover_img_slug: Optional[str] = None
     title: str
-    status: int
+    is_hidden: bool
     is_recommended: bool
     create_at: datetime
     view_count: int
     like_count: int
-    category: Optional[CategoryTree] = None
+    categories: List[CategoryTree] = []
     user: Optional[UserOut] = None
-    
+
+
 class ArticleDetailOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
-    user_id: int
     slug: str
-    cover_img_slug: str
+    cover_img_slug: Optional[str] = None
     title: str
-    content: Optional[str]
-    status: int
+    content: Optional[str] = None
+    is_hidden: bool
     is_recommended: bool
     create_at: datetime
     view_count: int
     like_count: int
+    categories: List[CategoryTree] = []
     user: Optional[UserOut] = None
-    primary_category: Optional[ArticleCategoryOut] =None
+
+
+class CategoryCreate(BaseModel):
+    name: str
+    slug: str
+    parent_id: int = 0
+    sort: int = 0
+
+
+class CategoryUpdate(BaseModel):
+    name: Optional[str] = None
+    slug: Optional[str] = None
+    parent_id: Optional[int] = None
+    sort: Optional[int] = None
+
+
+class ArticleCreate(BaseModel):
+    title: str
+    content: Optional[str] = None
+    cover_img_slug: Optional[str] = None
+    is_hidden: bool = False
+    is_recommended: bool = False
+    category_ids: List[int] = []
+
+
+class ArticleUpdate(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    cover_img_slug: Optional[str] = None
+    is_hidden: Optional[bool] = None
+    is_recommended: Optional[bool] = None
+    category_ids: Optional[List[int]] = None

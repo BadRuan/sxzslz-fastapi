@@ -51,7 +51,7 @@ class ImageCrud:
     async def record_view(self, slugname: str) -> None:
         stmt = (
             update(Image)
-            .where(Image.slug == slugname)
+            .where(Image.slug == slugname) # type: ignore
             .values(view=Image.view + 1)
         )
         await self.session.exec(stmt)
@@ -63,12 +63,12 @@ class ImageCrud:
             return True
         return False
 
-    async def get_total_count(self) -> int:
+    async def get_count(self) -> int:
         return (await self.session.scalar(
-            func.count(Image.id)
+            func.count(Image.id) # type: ignore
         )) or 0
 
-    async def get_total_view(self) -> int:
+    async def get_view(self) -> int:
         return (await self.session.scalar(
             func.sum(Image.view)
         )) or 0

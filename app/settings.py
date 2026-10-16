@@ -7,13 +7,13 @@ class Settings(BaseSettings):
     DB_ECHO: bool = False
     DEBUG: bool = False
     SECRET_KEY: str = "your-secret-key-change-in-production"
-    
+    DEFAULT_USER_ID: int = 1
 
     model_config = SettingsConfigDict(
         env_file = ".env",
         env_file_encoding= 'utf-8',
         extra = "ignore"
-        )
+    )
 
 settings: Settings = Settings()
 

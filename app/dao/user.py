@@ -15,7 +15,7 @@ class UserCrud:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_all_user(self) -> List[User]:
+    async def get_all(self) -> List[User]:
         data_stmt = (
             select(User)
             .order_by(User.id)  # type: ignore[arg-type]
@@ -23,12 +23,12 @@ class UserCrud:
         result = await self.session.exec(data_stmt)
         return list(result.all())
     
-    async def get_total_count(self) -> int:
+    async def get_count(self) -> int:
         return (await self.session.scalar(
             func.count(User.id)  # type: ignore[arg-type]
         )) or 0
     
-    async def get_by_user_id(self, id: int) -> Optional[UserOut]:
+    async def get_by_id(self, id: int) -> Optional[UserOut]:
         stmt = (
             select(User)
             .where(User.id == id)

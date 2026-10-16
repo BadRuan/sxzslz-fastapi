@@ -48,10 +48,10 @@ class DocumentCrud:
         await self.session.flush()
         return document_record
 
-    async def record_view(self, slugname: str) -> None:
+    async def get_view(self, slugname: str) -> None:
         stmt = (
             update(Document)
-            .where(Document.slug == slugname)
+            .where(Document.slug == slugname) # type: ignore
             .values(view=Document.view + 1)
         )
         await self.session.exec(stmt)
@@ -63,12 +63,12 @@ class DocumentCrud:
             return True
         return False
 
-    async def get_total_count(self) -> int:
+    async def get_count(self) -> int:
         return (await self.session.scalar(
-            func.count(Document.id)
+            func.count(Document.id) # type: ignore
         )) or 0
 
-    async def get_download_count(self) -> int:
+    async def get_download(self) -> int:
         return (await self.session.scalar(
-            func.count(Document.view)
+            func.count(Document.view) # type: ignore
         )) or 0

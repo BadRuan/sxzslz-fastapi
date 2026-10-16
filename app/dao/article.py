@@ -1,72 +1,99 @@
-from typing import Optional, List
+from typing import List, Optional, Tuple
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlmodel import select, update, desc, func
-from app.model import Article, Category, ArticleCategory
-from app.schema import ArticleDetailOut
+from sqlmodel import select, func, desc
+from sqlalchemy.orm import selectinload
+from app.model import Article, Category
 
 
 class ArticleCrud:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    # 查询某分类（含所有子孙分类）下的文章总数
-    async def count_category_article(self, category_id: int) -> int:
-            subquery = select(Category.path).where(Category.id == category_id)
-            stmt = (
-                select(func.count(Article.id)) # type: ignore[arg-type]
-                .join(ArticleCategory, Article.id == ArticleCategory.article_id)  # INNER JOIN article_category # type: ignore
-                .join(Category, ArticleCategory.category_id == Category.id)       # INNER JOIN category # type: ignore
-                .where(
-                    Category.path.startswith(subquery), # type: ignore
-                    Article.status == 1
-                )
-            )
-            return await self.session.scalar(stmt) or 0
-    
-    # 查询某分类（含所有子孙分类）下的文章
-    async def query_category_article(self, category_id: int, skip: int = 0, limit: int = 10) -> List[Article]:
-        subquery = select(Category.path).where(Category.id == category_id)
-        stmt = (
-            select(Article)
-            .join(ArticleCategory, Article.id == ArticleCategory.article_id)  # INNER JOIN article_category # type: ignore
-            .join(Category, ArticleCategory.category_id == Category.id)       # INNER JOIN category # type: ignore
-            .where(
-                Category.path.startswith(subquery), # type: ignore
-                Article.status == 1
-            )
-            .order_by(
-                desc(Article.create_at)
-            )
-            .offset(skip) 
-            .limit(limit)
+    @staticmethod
+    def _with_relations(stmt):
+        return stmt.options(
+            selectinload(Article.categories),  # type: ignore
+            selectinload(Article.user),  # type: ignore
+        )
+
+    async def get_by_id(self, article_id: int) -> Optional[Article]:
+        stmt = self._with_relations(
+            select(Article).where(Article.id == article_id, Article.is_deleted == False)  # noqa: E712
         )
         result = await self.session.exec(stmt)
-        return list(result.unique().all())
+        return result.first()
 
-    async def query_recommended_article(self, limit: int) -> List[Article]:  
-        stmt = (
-            select(Article)
-            .join(ArticleCategory, Article.id == ArticleCategory.article_id)  # INNER JOIN article_category # type: ignore
-            .join(Category, ArticleCategory.category_id == Category.id)       # INNER JOIN category # type: ignore
-            .where(Article.status == 1)
-            .order_by(desc(Article.create_at)) 
-            .limit(limit)
-        )
-        result = await self.session.exec(stmt)
-        return list(result.unique().all())
+    async def list_paginated(
+        self, page: int, page_size: int, category_id: Optional[int] = None
+    ) -> Tuple[List[Article], int]:
+        base = select(Article).where(Article.is_deleted == False)  # noqa: E712
+        if category_id is not None:
+            base = base.join(Article.categories).where(Category.id == category_id)
 
-    async def increase_view_count(self, slug: str) -> None:
-        await self.session.exec(
-            update(Article)
-            .where(Article.slug == slug) # type: ignore
-            .values(view_count=Article.view_count + 1)
-        )
+        count_stmt = select(func.count()).select_from(base.subquery())
+        total: int = (await self.session.exec(count_stmt)).one()
 
-    async def query_detail_by_slug(self, slug: str) -> Optional[ArticleDetailOut]:
-        article_stmt = (
-            select(Article)
-            .where(Article.slug == slug)
+        offset = (page - 1) * page_size
+        data_stmt = self._with_relations(
+            base.order_by(desc(Article.id)).offset(offset).limit(page_size)
         )
-        result = await self.session.exec(article_stmt)
-        return ArticleDetailOut.model_validate(result.first())
-    
+        result = await self.session.exec(data_stmt)
+        return list(result.all()), total
+
+    async def _resolve_categories(self, category_ids: List[int]) -> List[Category]:
+        if not category_ids:
+            return []
+        categories = (await self.session.exec(
+            select(Category).where(
+                Category.id.in_(category_ids),
+                Category.is_deleted == False,  # noqa: E712
+            )
+        )).all()
+        if len(categories) != len(set(category_ids)):
+            raise ValueError("存在无效的分类")
+        return list(categories)
+
+    async def create(
+        self,
+        *,
+        title: str,
+        content: Optional[str],
+        cover_img_slug: Optional[str],
+        is_hidden: bool,
+        is_recommended: bool,
+        user_id: int,
+        category_ids: List[int],
+    ) -> Article:
+        article = Article(
+            title=title,
+            content=content,
+            cover_img_slug=cover_img_slug,
+            is_hidden=is_hidden,
+            is_recommended=is_recommended,
+            user_id=user_id,
+        )
+        article.categories = await self._resolve_categories(category_ids)
+        self.session.add(article)
+        await self.session.flush()
+        return article
+
+    async def update(self, article_id: int, **fields) -> Optional[Article]:
+        article = await self.get_by_id(article_id)
+        if article is None:
+            return None
+        category_ids = fields.pop("category_ids", None)
+        for key, value in fields.items():
+            if value is not None:
+                setattr(article, key, value)
+        if category_ids is not None:
+            article.categories = await self._resolve_categories(category_ids)
+        await self.session.flush()
+        return article
+
+    async def soft_delete(self, article_id: int) -> bool:
+        article = await self.get_by_id(article_id)
+        if article is None:
+            return False
+        article.is_deleted = True
+        await self.session.flush()
+        return True
