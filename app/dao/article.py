@@ -28,7 +28,15 @@ class ArticleCrud:
     ) -> Tuple[List[Article], int]:
         base = select(Article).where(Article.is_deleted == False)  # noqa: E712
         if category_id is not None:
-            base = base.join(Article.categories).where(Category.id == category_id)
+            cat_result = await self.session.exec(
+                select(Category).where(Category.id == category_id)
+            )
+            category = cat_result.first()
+            if category is None:
+                return [], 0
+            base = base.join(Article.categories).where(
+                Category.path.like(f"{category.path}%")
+            )
 
         count_stmt = select(func.count()).select_from(base.subquery())
         total: int = (await self.session.exec(count_stmt)).one()
