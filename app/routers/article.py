@@ -29,6 +29,15 @@ async def list_articles(
     return await service.list_paginated(page, page_size, category_id)
 
 
+@router.get("/detail/{slug}", response_model=ArticleDetailOut)
+async def get_article_by_slug(slug: str, session: AsyncSession = Depends(get_session)):
+    service = ArticleService(session)
+    article = await service.get_by_slug(slug)
+    if article is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")
+    return article
+
+
 @router.get("/{article_id}", response_model=ArticleDetailOut)
 async def get_article(article_id: int, session: AsyncSession = Depends(get_session)):
     service = ArticleService(session)

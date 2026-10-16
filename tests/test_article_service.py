@@ -37,3 +37,13 @@ async def test_create_with_category(session, default_user):
     service = ArticleService(session)
     out = await service.create(ArticleCreate(title="标题", category_ids=[cat.id]))
     assert [c.id for c in out.categories] == [cat.id]
+
+
+async def test_get_by_slug_service(session, default_user):
+    service = ArticleService(session)
+    out = await service.create(ArticleCreate(title="slug详情"))
+    got = await service.get_by_slug(out.slug)
+    assert got is not None
+    assert got.id == out.id
+    assert got.content is None
+    assert await service.get_by_slug("no-such-slug") is None

@@ -41,6 +41,12 @@ class ArticleService:
             return None
         return ArticleDetailOut.model_validate(article)
 
+    async def get_by_slug(self, slug: str) -> Optional[ArticleDetailOut]:
+        article = await self.crud.get_by_slug(slug)
+        if article is None:
+            return None
+        return ArticleDetailOut.model_validate(article)
+
     async def update(self, article_id: int, data: ArticleUpdate) -> Optional[ArticleDetailOut]:
         article = await self.crud.update(article_id, **data.model_dump(exclude_unset=True))
         if article is None:

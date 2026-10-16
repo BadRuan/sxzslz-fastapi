@@ -126,3 +126,23 @@ async def test_list_paginated_subtree_filter(session, default_user):
     items, total = await crud.list_paginated(page=1, page_size=10, category_id=999)
     assert total == 0
     assert items == []
+
+
+async def test_get_by_slug(session, default_user):
+    cat_crud = CategoryCrud(session)
+    cat = await cat_crud.create(name="会议", slug="huiyi", parent_id=0, sort=0)
+
+    crud = ArticleCrud(session)
+    created = await crud.create(
+        title="slug文章", content="内容", cover_img_slug=None,
+        is_hidden=False, is_recommended=False,
+        user_id=default_user.id, category_ids=[cat.id],
+    )
+
+    loaded = await crud.get_by_slug(created.slug)
+    assert loaded is not None
+    assert loaded.id == created.id
+    assert loaded.title == "slug文章"
+    assert [c.id for c in loaded.categories] == [cat.id]
+
+    assert await crud.get_by_slug("no-such-slug") is None

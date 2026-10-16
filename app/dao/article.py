@@ -23,6 +23,13 @@ class ArticleCrud:
         result = await self.session.exec(stmt)
         return result.first()
 
+    async def get_by_slug(self, slug: str) -> Optional[Article]:
+        stmt = self._with_relations(
+            select(Article).where(Article.slug == slug, Article.is_deleted == False)  # noqa: E712
+        )
+        result = await self.session.exec(stmt)
+        return result.first()
+
     async def list_paginated(
         self, page: int, page_size: int, category_id: Optional[int] = None
     ) -> Tuple[List[Article], int]:
