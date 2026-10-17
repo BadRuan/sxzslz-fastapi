@@ -1,6 +1,8 @@
 from typing import List, Optional
-from sqlmodel import select, update, func, desc
+
+from sqlmodel import desc, func, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
+
 from app.model import Document
 from app.schema import PageResponse
 
@@ -17,10 +19,7 @@ class DocumentCrud:
         offset = (page - 1) * page_size
 
         data_stmt = (
-            select(Document)
-            .offset(offset)
-            .limit(page_size)
-            .order_by(desc(Document.view))
+            select(Document).offset(offset).limit(page_size).order_by(desc(Document.view))
         )
         results = await self.session.exec(data_stmt)
         items: List[Document] = list(results.all())
@@ -29,7 +28,7 @@ class DocumentCrud:
             page=page,
             has_next=False,
             page_size=page_size,
-            data=items
+            data=items,
         )
 
     async def get_by_slug(self, slugname: str) -> Optional[Document]:
@@ -37,21 +36,23 @@ class DocumentCrud:
         result = await self.session.exec(stmt)
         return result.first()
 
-    async def add(self, raw_filename: str, slug: str, mime_type: str, size: int) -> Document:
+    async def add(
+        self, raw_filename: str, slug: str, mime_type: str, size: int
+    ) -> Document:
         document_record = Document(
             raw_filename=raw_filename,
             slug=slug,
             mime_type=mime_type,
-            size_bytes=size
+            size_bytes=size,
         )
         self.session.add(document_record)
         await self.session.flush()
         return document_record
 
-    async def get_view(self, slugname: str) -> None:
+    async def record_view(self, slugname: str) -> None:
         stmt = (
             update(Document)
-            .where(Document.slug == slugname) # type: ignore
+            .where(Document.slug == slugname)  # type: ignore
             .values(view=Document.view + 1)
         )
         await self.session.exec(stmt)
@@ -62,13 +63,3 @@ class DocumentCrud:
             await self.session.delete(document)
             return True
         return False
-
-    async def get_count(self) -> int:
-        return (await self.session.scalar(
-            func.count(Document.id) # type: ignore
-        )) or 0
-
-    async def get_download(self) -> int:
-        return (await self.session.scalar(
-            func.count(Document.view) # type: ignore
-        )) or 0

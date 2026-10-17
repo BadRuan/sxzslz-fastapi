@@ -20,8 +20,8 @@ class ImageService:
         return await self.crud.list_paginated(page, page_size)
     
     async def add(self, filename: str, mime_type: str, content: bytes) -> Optional[Image]:
-        suffiex = Path(filename).suffix
-        slugname = generate_slug() + suffiex
+        suffix = Path(filename).suffix
+        slugname = generate_slug() + suffix
         filepath = path.join(upload_dir.image_raw, slugname)
         
         with open(filepath, 'wb') as f:

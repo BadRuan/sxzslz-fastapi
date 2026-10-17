@@ -1,6 +1,8 @@
 from typing import List, Optional
-from sqlmodel import select, update, func, desc
+
+from sqlmodel import desc, func, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
+
 from app.model import Image
 from app.schema import PageResponse
 
@@ -17,10 +19,7 @@ class ImageCrud:
         offset = (page - 1) * page_size
 
         data_stmt = (
-            select(Image)
-            .offset(offset)
-            .limit(page_size)
-            .order_by(desc(Image.id))
+            select(Image).offset(offset).limit(page_size).order_by(desc(Image.id))
         )
         results = await self.session.exec(data_stmt)
         items: List[Image] = list(results.all())
@@ -29,7 +28,7 @@ class ImageCrud:
             page=page,
             has_next=False,
             page_size=page_size,
-            data=items
+            data=items,
         )
 
     async def get_by_slug(self, slugname: str) -> Optional[Image]:
@@ -37,12 +36,14 @@ class ImageCrud:
         result = await self.session.exec(stmt)
         return result.first()
 
-    async def add(self, raw_filename: str, slug: str, mime_type: str, size: int) -> Image:
+    async def add(
+        self, raw_filename: str, slug: str, mime_type: str, size: int
+    ) -> Image:
         image_record = Image(
             raw_filename=raw_filename,
             slug=slug,
             mime_type=mime_type,
-            size_bytes=size
+            size_bytes=size,
         )
         self.session.add(image_record)
         await self.session.flush()
@@ -51,7 +52,7 @@ class ImageCrud:
     async def record_view(self, slugname: str) -> None:
         stmt = (
             update(Image)
-            .where(Image.slug == slugname) # type: ignore
+            .where(Image.slug == slugname)  # type: ignore
             .values(view=Image.view + 1)
         )
         await self.session.exec(stmt)
@@ -62,13 +63,3 @@ class ImageCrud:
             await self.session.delete(image)
             return True
         return False
-
-    async def get_count(self) -> int:
-        return (await self.session.scalar(
-            func.count(Image.id) # type: ignore
-        )) or 0
-
-    async def get_view(self) -> int:
-        return (await self.session.scalar(
-            func.sum(Image.view)
-        )) or 0

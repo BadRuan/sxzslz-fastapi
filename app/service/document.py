@@ -19,8 +19,8 @@ class DocumentService:
         return await self.crud.list_paginated(page, page_size)
     
     async def add(self, filename: str, mime_type: str, content: bytes) -> Optional[Document]:
-        suffiex = Path(filename).suffix
-        slugname = generate_slug() + suffiex
+        suffix = Path(filename).suffix
+        slugname = generate_slug() + suffix
         filepath = path.join(upload_dir.document, slugname)
         
         with open(filepath, 'wb') as f:
@@ -47,7 +47,7 @@ class DocumentService:
     async def get_by_slug(self, slugname: str) -> Optional[Document]:
         document: Optional[Document] = await self.crud.get_by_slug(slugname)
         if document is not None:
-            await self.crud.get_view(slugname)
+            await self.crud.record_view(slugname)
             await self.crud.session.refresh(document)
             return document
         else:

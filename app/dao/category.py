@@ -41,12 +41,6 @@ class CategoryCrud:
         result = await self.session.exec(stmt)
         return result.first()
 
-    async def get_by_id(self, category_id: int) -> Optional[CategoryTree]:
-        category = await self.get_raw_by_id(category_id)
-        if category is None or category.is_deleted:
-            return None
-        return CategoryTree.model_validate(category)
-
     async def get_by_slug(self, slug: str) -> Optional[Category]:
         stmt = select(Category).where(
             Category.slug == slug,

@@ -1,4 +1,5 @@
 from typing import List, NamedTuple
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,35 +14,44 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 12
 
     model_config = SettingsConfigDict(
-        env_file = ".env",
-        env_file_encoding= 'utf-8',
-        extra = "ignore"
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
 
+
 settings: Settings = Settings()
+
 
 def cors_origins() -> List[str]:
     return [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
 
-class IMAGE_DIR(NamedTuple):
+
+class UploadDir(NamedTuple):
+    """上传文件落盘目录（相对项目根）。"""
+
     image_raw: str
     image_preview: str
     document: str
 
-class ALLOW_TYPE(NamedTuple):
+
+class AllowType(NamedTuple):
+    """上传文件允许的 MIME 类型白名单。"""
+
     image: List[str]
     document: List[str]
 
-base_dir = './uploads/'
 
-upload_dir = IMAGE_DIR(
-    image_raw= base_dir + 'image/raw', 
-    image_preview= base_dir + 'image/preview',
-    document= base_dir + 'document'
+base_dir = "./uploads/"
+
+upload_dir = UploadDir(
+    image_raw=base_dir + "image/raw",
+    image_preview=base_dir + "image/preview",
+    document=base_dir + "document",
 )
 
-allow_type: ALLOW_TYPE = ALLOW_TYPE(
-    image = ["image/jpeg", "image/png", "image/webp"],
+allow_type: AllowType = AllowType(
+    image=["image/jpeg", "image/png", "image/webp"],
     document=[
         "application/msword",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -51,6 +61,6 @@ allow_type: ALLOW_TYPE = ALLOW_TYPE(
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "text/plain",
         "application/pdf",
-        "application/zip"
-    ]
+        "application/zip",
+    ],
 )
