@@ -18,6 +18,7 @@ engine = create_async_engine(
 
 
 async def get_session():
+    """请求级会话：成功结束自动 commit，异常 rollback。DAO 层只 flush，不自行 commit。"""
     async with AsyncSession(engine) as session:
         try:
             yield session
