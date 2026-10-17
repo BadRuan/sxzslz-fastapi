@@ -2,7 +2,7 @@ from typing import List, Optional
 from sqlalchemy.exc import IntegrityError
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.dao import CategoryCrud
-from app.schema import CategoryCreate, CategoryUpdate, CategoryOut
+from app.schema import CategoryCreate, CategoryOut, CategoryTree, CategoryUpdate
 
 
 class CategoryService:
@@ -26,6 +26,9 @@ class CategoryService:
     async def list(self) -> List[CategoryOut]:
         categories = await self.crud.get_active_all()
         return [CategoryOut.model_validate(c) for c in categories]
+
+    async def get_tree(self) -> List[CategoryTree]:
+        return await self.crud.get_tree_all()
 
     async def get(self, category_id: int) -> Optional[CategoryOut]:
         category = await self.crud.get_raw_by_id(category_id)

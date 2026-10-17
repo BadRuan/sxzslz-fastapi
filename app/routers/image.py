@@ -1,73 +1,76 @@
 from enum import Enum
 from os import path
-from fastapi import APIRouter, Depends, Query, UploadFile, HTTPException, status
+
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.settings import upload_dir, allow_type
-from app.database import get_session
-from app.service import ImageService
-from app.schema import PageResponse
 
+from app.database import get_session
+from app.schema import ImageOut, PageResponse, UploadResult
+from app.service import ImageService
+from app.settings import allow_type, upload_dir
 
 router = APIRouter()
 
 
-@router.get('/', response_model=PageResponse)
+class ImageType(str, Enum):
+    raw = "raw"
+    preview = "preview"
+
+
+@router.get("/", response_model=PageResponse[ImageOut])
 async def get_images(
-    page: int = Query(default=1, ge=1, description='页码'),
-    page_size: int = Query(default=30, ge=1, le=100, description='每页条数'),
-    session: AsyncSession = Depends(get_session)
+    page: int = Query(default=1, ge=1, description="页码"),
+    page_size: int = Query(default=30, ge=1, le=100, description="每页条数"),
+    session: AsyncSession = Depends(get_session),
 ):
     service = ImageService(session)
     return await service.list_paginated(page, page_size)
 
 
-@router.post('/')
-async def create_upload_file(file: UploadFile, session: AsyncSession = Depends(get_session)):
+@router.post("/", response_model=UploadResult)
+async def upload_image(file: UploadFile, session: AsyncSession = Depends(get_session)):
     if file.content_type not in allow_type.image:
         raise HTTPException(
-            status_code=400,
-            detail="仅支持 JPG, PNG, WebP 格式的图片"
+            status_code=400, detail="仅支持 JPG, PNG, WebP 格式的图片"
         )
 
-    filename = file.filename or 'default_name'
+    filename = file.filename or "default_name"
     content = await file.read()
     service = ImageService(session)
-    image = await service.add(filename=filename, mime_type=str(file.content_type), content=content)
-    if image is not None:
-        return {
-            "filename": file.filename,
-            "slug": image.slug,
-            "content_type": file.content_type,
-        }
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail="上传失败"
-        )
+    image = await service.add(
+        filename=filename, mime_type=str(file.content_type), content=content
+    )
+    if image is None:
+        raise HTTPException(status_code=400, detail="上传失败")
+    return UploadResult(
+        filename=file.filename or filename,
+        slug=image.slug,
+        content_type=str(file.content_type),
+    )
 
 
-class TypeName(str, Enum):
-    raw = 'raw'
-    preview = 'preview'
-
-
-@router.get('/{slug}')
-async def get_image(slug: str, _t: TypeName = TypeName.preview, session: AsyncSession = Depends(get_session)):
+@router.get("/{slug}")
+async def get_image(
+    slug: str,
+    file_type: ImageType = Query(default=ImageType.preview, description="返回原图或预览图"),
+    session: AsyncSession = Depends(get_session),
+):
     service = ImageService(session)
     image = await service.get_by_slug(slug)
-    if image is not None:
-        if _t == TypeName.raw:
-            file_path = path.join(upload_dir.image_raw, slug)
-        elif _t == TypeName.preview:
-            slug, _ = path.splitext(slug)
-            file_path = path.join(upload_dir.image_preview, slug + '.webp')
-        return FileResponse(
-            path=file_path,
-            media_type=image.mime_type,
-            headers={"Content-Disposition": "inline"}
+    if image is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
         )
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail='Image not found'
+
+    if file_type == ImageType.raw:
+        file_path = path.join(upload_dir.image_raw, slug)
+    else:
+        slug_base, _ = path.splitext(slug)
+        file_path = path.join(upload_dir.image_preview, slug_base + ".webp")
+
+    return FileResponse(
+        path=file_path,
+        media_type=image.mime_type,
+        headers={"Content-Disposition": "inline"},
     )

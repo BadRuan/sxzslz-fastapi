@@ -13,13 +13,14 @@ from app.schema.category import (
 )
 from app.schema.common import PageResponse
 from app.schema.file import DocumentOut, ImageOut, UploadResult
-from app.schema.user import UserOut
+from app.schema.user import BaseInfoOut, UserOut
 
 __all__ = [
     "ArticleCreate",
     "ArticleDetailOut",
     "ArticleOut",
     "ArticleUpdate",
+    "BaseInfoOut",
     "CategoryCreate",
     "CategoryOut",
     "CategoryTree",
