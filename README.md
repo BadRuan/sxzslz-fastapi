@@ -41,16 +41,20 @@ sxzslz-fastapi/
 │   │   ├── image.py
 │   │   └── document.py
 │   ├── utils/            # 工具函数
-│   ├── database.py       # 数据库连接与初始化
-│   ├── schema.py         # 请求/响应模型（含分页）
+│   ├── auth.py           # JWT 签发/校验 + get_current_user
+│   ├── database.py       # 数据库连接与 Alembic 启动迁移
+│   ├── schema.py         # 请求/响应模型（含分页、登录）
 │   └── settings.py       # 环境变量配置
+├── alembic/              # 数据库迁移
 ├── tests/                # 测试（dao / service / API 层）
 │   ├── conftest.py
 │   ├── test_category_dao.py
 │   ├── test_category_service.py
 │   ├── test_article_dao.py
 │   ├── test_article_service.py
-│   └── test_article_api.py
+│   ├── test_article_api.py
+│   ├── test_auth_api.py
+│   └── test_migrations.py
 ├── main.py               # 应用入口
 ├── pyproject.toml        # 项目依赖与配置
 └── .env                  # 环境变量（需自行创建）
@@ -74,9 +78,13 @@ DB_ECHO=false
 DEBUG=false
 SECRET_KEY=your-secret-key-change-in-production
 DEFAULT_USER_ID=1
+CORS_ORIGINS=http://localhost:3000
+ACCESS_TOKEN_EXPIRE_MINUTES=720
 ```
 
-> `DEFAULT_USER_ID` 为创建文章时的默认作者 ID，需对应数据库中已存在的用户。
+> `DEFAULT_USER_ID` 为创建文章时的默认作者 ID，需对应数据库中已存在的用户。  
+> `CORS_ORIGINS` 为逗号分隔的允许来源。  
+> `SECRET_KEY` 用于 JWT 签名，生产环境务必更换。
 
 ### 3. 安装依赖
 
@@ -105,6 +113,10 @@ uv run fastapi dev --host 0.0.0.0 --port 8088
 - ReDoc 文档: <http://localhost:8000/redoc>
 
 ## API 接口
+
+> **鉴权**：读接口公开；写操作（`POST` / `PATCH` / `DELETE`）需请求头 `Authorization: Bearer <token>`。  
+> 登录获取 token：`POST /auth/login`，请求体 `{"username": "...", "password": "..."}`，响应 `{"access_token": "...", "token_type": "bearer"}`。  
+> `GET /auth/me` 返回当前登录用户。未带 token 或 token 无效时返回 401。
 
 ### 基础信息 `/base`
 
@@ -298,18 +310,22 @@ uv run pytest -v
 
 ### 测试说明
 
-- `tests/conftest.py`：使用内存 SQLite + `StaticPool` 提供隔离的测试引擎与 session，并提供 API 层测试客户端（`client`，走真实路由）。
+- `tests/conftest.py`：使用内存 SQLite + `StaticPool` 提供隔离的测试引擎与 session，并提供 API 层测试客户端（`client`，走真实路由）与写操作鉴权头（`auth_headers`）。
 - `tests/test_category_dao.py` / `tests/test_article_dao.py`：数据访问层测试，覆盖创建、查询、更新、移动、软删除（含级联）、分页等。
 - `tests/test_category_service.py` / `tests/test_article_service.py`：业务层测试，覆盖唯一性校验（含软删复用与并发冲突）、默认作者、分页响应结构等。
 - `tests/test_article_api.py`：API 层测试，验证文章以 slug 定位的路由行为（200/204/404）。
+- `tests/test_auth_api.py`：登录、`/auth/me`、写操作 401 行为。
+- `tests/test_migrations.py`：验证 Alembic 迁移可在干净 SQLite 上建齐全部表。
 
 ## 开发说明
 
-- 数据库表会在首次启动时自动创建（`init_db`），并通过幂等 SQL 补齐软删除字段；同时将 `category.name` / `category.slug` 的旧有全表唯一约束迁移为「仅活跃行」的部分唯一索引（`uq_category_name` / `uq_category_slug`），软删分类的名称与 slug 可被复用。
+- 数据库结构由 **Alembic** 管理（`alembic/versions/`），启动时自动 `alembic upgrade head`。改模型后执行 `uv run alembic revision --autogenerate -m "..."` 并人工核对迁移文件。
+- **既有老库**（曾用 `create_all` 建表）首次接入时先执行 `uv run alembic stamp head`，否则升级会因表已存在而失败。
+- 分类与文章删除均为软删除（`is_deleted = True`），列表与详情查询自动过滤已删除记录。`category.name` / `category.slug` 为「仅活跃行」部分唯一索引，软删后可复用。
 - 分类与文章删除均为软删除（`is_deleted = True`），列表与详情查询自动过滤已删除记录。
 - 删除分类会**级联软删其整棵子树**，保证分类树接口（`/base/`）与平铺列表接口（`/categories/`）行为一致；已软删的分类不会出现在文章详情的 `categories` 中。
 - 分类支持多级层级（通过 `parent_id`、`path`、`level` 维护），移动分类时会同步更新其后代路径。
 - 文章通过 **slug** 定位（`GET` / `PATCH` / `DELETE /articles/{slug}`），slug 使用 UUID 自动生成；文章与分类为多对多关系。
 - 文章列表按 `category_id` 过滤时按 `path` 前缀匹配整个子树，且不产生重复行。
-- 密码使用 Argon2 算法加密存储。
-- 错误格式：404 / 400 返回 `{"detail": "..."}`（业务校验错误如重名返回 400）；请求参数格式非法返回 422。
+- 密码使用 Argon2 算法加密存储；JWT 密钥为 `SECRET_KEY`，有效期 `ACCESS_TOKEN_EXPIRE_MINUTES`（默认 12 小时）。
+- 错误格式：404 / 400 返回 `{"detail": "..."}`（业务校验错误如重名返回 400）；未认证返回 401；请求参数格式非法返回 422。

@@ -1,7 +1,9 @@
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlmodel.ext.asyncio.session import AsyncSession
+from app.auth import get_current_user
 from app.database import get_session
+from app.model import User
 from app.service import ArticleService
 from app.schema import ArticleCreate, ArticleUpdate, ArticleOut, ArticleDetailOut, PageResponse
 
@@ -10,7 +12,11 @@ router = APIRouter()
 
 
 @router.post("/", response_model=ArticleDetailOut, status_code=status.HTTP_201_CREATED)
-async def create_article(data: ArticleCreate, session: AsyncSession = Depends(get_session)):
+async def create_article(
+    data: ArticleCreate,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(get_current_user),
+):
     service = ArticleService(session)
     try:
         return await service.create(data)
@@ -40,7 +46,10 @@ async def get_article(slug: str, session: AsyncSession = Depends(get_session)):
 
 @router.patch("/{slug}", response_model=ArticleDetailOut)
 async def update_article(
-    slug: str, data: ArticleUpdate, session: AsyncSession = Depends(get_session)
+    slug: str,
+    data: ArticleUpdate,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(get_current_user),
 ):
     service = ArticleService(session)
     try:
@@ -53,7 +62,11 @@ async def update_article(
 
 
 @router.delete("/{slug}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_article(slug: str, session: AsyncSession = Depends(get_session)):
+async def delete_article(
+    slug: str,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(get_current_user),
+):
     service = ArticleService(session)
     if not await service.delete(slug):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")

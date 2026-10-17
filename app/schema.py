@@ -18,6 +18,16 @@ class UserOut(BaseModel):
     slug: str
     nickname: str
 
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class TokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
 class CategoryTree(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     

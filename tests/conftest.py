@@ -5,6 +5,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.auth import create_access_token
 from app.database import get_session
 from app.model import User, Article, Category, ArticleCategory, Image, Document  # noqa: F401
 from main import app as fastapi_app
@@ -44,7 +45,14 @@ async def client(session):
 
 @pytest.fixture
 async def default_user(session):
-    user = User(username="admin", nickname="管理员", password="test")
+    user = User.create_user(username="admin", nickname="管理员", password="test123")
     session.add(user)
     await session.flush()
     return user
+
+
+@pytest.fixture
+async def auth_headers(default_user):
+    """写操作所需的 Bearer 鉴权头"""
+    token = create_access_token(default_user.id)
+    return {"Authorization": f"Bearer {token}"}

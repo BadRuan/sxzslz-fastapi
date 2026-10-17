@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     SECRET_KEY: str = "your-secret-key-change-in-production"
     DEFAULT_USER_ID: int = 1
+    # 逗号分隔的允许来源，如 "http://localhost:3000,https://example.com"
+    CORS_ORIGINS: str = "*"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 12
 
     model_config = SettingsConfigDict(
         env_file = ".env",
@@ -16,6 +19,9 @@ class Settings(BaseSettings):
     )
 
 settings: Settings = Settings()
+
+def cors_origins() -> List[str]:
+    return [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
 
 class IMAGE_DIR(NamedTuple):
     image_raw: str

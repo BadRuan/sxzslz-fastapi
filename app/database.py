@@ -1,15 +1,21 @@
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy import text
-from sqlmodel import SQLModel
-from sqlmodel.ext.asyncio.session import AsyncSession
-from .settings import settings
+import asyncio
+from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from app.settings import settings
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DB_ECHO,
-    pool_pre_ping=True
+    pool_pre_ping=True,
 )
+
 
 async def get_session():
     async with AsyncSession(engine) as session:
@@ -23,15 +29,11 @@ async def get_session():
             await session.close()
 
 
+def _upgrade_to_head() -> None:
+    cfg = Config(str(_PROJECT_ROOT / "alembic.ini"))
+    command.upgrade(cfg, "head")
+
+
 async def init_db() -> None:
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-        # create_all 不会为已存在的表新增列，这里幂等地补齐软删除字段
-        await conn.execute(text("ALTER TABLE article ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE"))
-        await conn.execute(text("ALTER TABLE category ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE"))
-        # name/slug 唯一性从全表唯一改为「仅活跃行」部分索引，软删后允许复用
-        await conn.execute(text("ALTER TABLE category DROP CONSTRAINT IF EXISTS category_name_key"))
-        await conn.execute(text("ALTER TABLE category DROP CONSTRAINT IF EXISTS category_slug_key"))
-        await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_category_name ON category (name) WHERE NOT is_deleted"))
-        await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_category_slug ON category (slug) WHERE NOT is_deleted"))
-    
+    """启动时执行 Alembic 迁移到 head（替代原先 create_all + 幂等 SQL）。"""
+    await asyncio.to_thread(_upgrade_to_head)

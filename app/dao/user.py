@@ -35,3 +35,8 @@ class UserCrud:
         )
         result = await self.session.exec(stmt)
         return UserOut.model_validate(result.first())
+
+    async def get_by_username(self, username: str) -> Optional[User]:
+        stmt = select(User).where(User.username == username)
+        result = await self.session.exec(stmt)
+        return result.first()

@@ -1,7 +1,9 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlmodel.ext.asyncio.session import AsyncSession
+from app.auth import get_current_user
 from app.database import get_session
+from app.model import User
 from app.service import CategoryService
 from app.schema import CategoryCreate, CategoryUpdate, CategoryOut
 
@@ -10,7 +12,11 @@ router = APIRouter()
 
 
 @router.post("/", response_model=CategoryOut, status_code=status.HTTP_201_CREATED)
-async def create_category(data: CategoryCreate, session: AsyncSession = Depends(get_session)):
+async def create_category(
+    data: CategoryCreate,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(get_current_user),
+):
     service = CategoryService(session)
     try:
         return await service.create(data)
@@ -35,7 +41,10 @@ async def get_category(category_id: int, session: AsyncSession = Depends(get_ses
 
 @router.patch("/{category_id}", response_model=CategoryOut)
 async def update_category(
-    category_id: int, data: CategoryUpdate, session: AsyncSession = Depends(get_session)
+    category_id: int,
+    data: CategoryUpdate,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(get_current_user),
 ):
     service = CategoryService(session)
     try:
@@ -48,7 +57,11 @@ async def update_category(
 
 
 @router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_category(category_id: int, session: AsyncSession = Depends(get_session)):
+async def delete_category(
+    category_id: int,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(get_current_user),
+):
     service = CategoryService(session)
     if not await service.delete(category_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分类不存在")

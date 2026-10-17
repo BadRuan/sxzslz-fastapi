@@ -36,26 +36,30 @@ async def test_detail_prefix_route_removed(client, session):
     assert resp.status_code == 404
 
 
-async def test_patch_article_by_slug(client, session):
+async def test_patch_article_by_slug(client, session, auth_headers):
     out = await _create(session, title="旧标题")
-    resp = await client.patch(f"/articles/{out.slug}", json={"title": "新标题"})
+    resp = await client.patch(
+        f"/articles/{out.slug}", json={"title": "新标题"}, headers=auth_headers
+    )
     assert resp.status_code == 200
     assert resp.json()["title"] == "新标题"
 
 
-async def test_patch_unknown_slug_returns_404(client):
-    resp = await client.patch("/articles/no-such-slug", json={"title": "x"})
+async def test_patch_unknown_slug_returns_404(client, auth_headers):
+    resp = await client.patch(
+        "/articles/no-such-slug", json={"title": "x"}, headers=auth_headers
+    )
     assert resp.status_code == 404
 
 
-async def test_delete_article_by_slug(client, session):
+async def test_delete_article_by_slug(client, session, auth_headers):
     out = await _create(session)
-    resp = await client.delete(f"/articles/{out.slug}")
+    resp = await client.delete(f"/articles/{out.slug}", headers=auth_headers)
     assert resp.status_code == 204
     resp2 = await client.get(f"/articles/{out.slug}")
     assert resp2.status_code == 404
 
 
-async def test_delete_unknown_slug_returns_404(client):
-    resp = await client.delete("/articles/no-such-slug")
+async def test_delete_unknown_slug_returns_404(client, auth_headers):
+    resp = await client.delete("/articles/no-such-slug", headers=auth_headers)
     assert resp.status_code == 404
