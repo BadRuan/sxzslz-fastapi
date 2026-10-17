@@ -1,17 +1,16 @@
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from sqlmodel import desc, func, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.model import Image
-from app.schema import PageResponse
 
 
 class ImageCrud:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_paginated(self, page: int, page_size: int) -> PageResponse[Image]:
+    async def list_paginated(self, page: int, page_size: int) -> Tuple[List[Image], int]:
         count_stmt = select(func.count()).select_from(Image)
         total = await self.session.exec(count_stmt)
         total_count: int = total.one()
@@ -23,13 +22,7 @@ class ImageCrud:
         )
         results = await self.session.exec(data_stmt)
         items: List[Image] = list(results.all())
-        return PageResponse(
-            total=total_count,
-            page=page,
-            has_next=False,
-            page_size=page_size,
-            data=items,
-        )
+        return items, total_count
 
     async def get_by_slug(self, slugname: str) -> Optional[Image]:
         stmt = select(Image).where(Image.slug == slugname)

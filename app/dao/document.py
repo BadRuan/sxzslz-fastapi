@@ -1,17 +1,18 @@
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from sqlmodel import desc, func, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.model import Document
-from app.schema import PageResponse
 
 
 class DocumentCrud:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_paginated(self, page: int, page_size: int) -> PageResponse[Document]:
+    async def list_paginated(
+        self, page: int, page_size: int
+    ) -> Tuple[List[Document], int]:
         count_stmt = select(func.count()).select_from(Document)
         total = await self.session.exec(count_stmt)
         total_count: int = total.one()
@@ -19,17 +20,14 @@ class DocumentCrud:
         offset = (page - 1) * page_size
 
         data_stmt = (
-            select(Document).offset(offset).limit(page_size).order_by(desc(Document.view))
+            select(Document)
+            .offset(offset)
+            .limit(page_size)
+            .order_by(desc(Document.view))
         )
         results = await self.session.exec(data_stmt)
         items: List[Document] = list(results.all())
-        return PageResponse(
-            total=total_count,
-            page=page,
-            has_next=False,
-            page_size=page_size,
-            data=items,
-        )
+        return items, total_count
 
     async def get_by_slug(self, slugname: str) -> Optional[Document]:
         stmt = select(Document).where(Document.slug == slugname)

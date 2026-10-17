@@ -17,7 +17,14 @@ class ImageService:
                 makedirs(i)
     
     async def list_paginated(self, page: int, page_size: int) -> PageResponse[Image]:
-        return await self.crud.list_paginated(page, page_size)
+        items, total = await self.crud.list_paginated(page, page_size)
+        return PageResponse(
+            data=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            has_next=False,
+        )
     
     async def add(self, filename: str, mime_type: str, content: bytes) -> Optional[Image]:
         suffix = Path(filename).suffix

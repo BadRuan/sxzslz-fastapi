@@ -15,8 +15,17 @@ class DocumentService:
         if not path.exists(upload_dir.document):
             makedirs(upload_dir.document)
     
-    async def list_paginated(self, page: int, page_size: int) -> PageResponse[Document]:
-        return await self.crud.list_paginated(page, page_size)
+    async def list_paginated(
+        self, page: int, page_size: int
+    ) -> PageResponse[Document]:
+        items, total = await self.crud.list_paginated(page, page_size)
+        return PageResponse(
+            data=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            has_next=False,
+        )
     
     async def add(self, filename: str, mime_type: str, content: bytes) -> Optional[Document]:
         suffix = Path(filename).suffix
