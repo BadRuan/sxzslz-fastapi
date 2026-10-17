@@ -5,6 +5,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.settings import upload_dir
 from app.schema import PageResponse
 from app.model import Document
+from app.model.document import generate_slug
 from app.dao import DocumentCrud
 
 
@@ -19,7 +20,7 @@ class DocumentService:
     
     async def add(self, filename: str, mime_type: str, content: bytes) -> Optional[Document]:
         suffiex = Path(filename).suffix
-        slugname = Document.gen_slug() + suffiex
+        slugname = generate_slug() + suffiex
         filepath = path.join(upload_dir.document, slugname)
         
         with open(filepath, 'wb') as f:

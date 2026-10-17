@@ -1,6 +1,11 @@
-from uuid import uuid4
 from datetime import datetime
-from sqlmodel import SQLModel, Field
+from uuid import uuid4
+
+from sqlmodel import Field, SQLModel
+
+
+def generate_slug() -> str:
+    return uuid4().hex
 
 
 class Image(SQLModel, table=True):
@@ -13,7 +18,3 @@ class Image(SQLModel, table=True):
     size_bytes: int
     view: int = Field(default=0)
     uploaded_at: datetime = Field(default_factory=datetime.now)
-
-    @staticmethod
-    def gen_slug() -> str:
-        return uuid4().hex

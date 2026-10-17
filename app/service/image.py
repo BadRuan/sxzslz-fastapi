@@ -5,6 +5,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.settings import upload_dir
 from app.model import Image
 from app.dao import ImageCrud
+from app.model.image import generate_slug
 from app.utils import generate_webp_images
 from app.schema import PageResponse
 
@@ -20,7 +21,7 @@ class ImageService:
     
     async def add(self, filename: str, mime_type: str, content: bytes) -> Optional[Image]:
         suffiex = Path(filename).suffix
-        slugname = Image.gen_slug() + suffiex
+        slugname = generate_slug() + suffiex
         filepath = path.join(upload_dir.image_raw, slugname)
         
         with open(filepath, 'wb') as f:

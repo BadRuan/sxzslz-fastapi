@@ -1,14 +1,18 @@
-from typing import TYPE_CHECKING, List, Optional
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import uuid4
-from sqlmodel import SQLModel, Field, Relationship
-from sqlalchemy import Index, text
-from sqlalchemy.orm import foreign
+
+from sqlmodel import Field, Relationship, SQLModel
+
+from app.model.category import Category
+
 if TYPE_CHECKING:
     from app.model.user import User
 
+
 def generate_slug() -> str:
     return uuid4().hex[:16]
+
 
 class ArticleCategory(SQLModel, table=True):
     __tablename__: str = "article_category"
@@ -16,52 +20,15 @@ class ArticleCategory(SQLModel, table=True):
     article_id: int = Field(primary_key=True)
     category_id: int = Field(primary_key=True)
 
-class Category(SQLModel, table=True):
-    __tablename__: str = "category"
-
-    id: int = Field(primary_key=True, default=None)
-    # name/slug 唯一性由下方部分索引约束（仅活跃行），软删后可复用
-    name: str = Field(nullable=False)
-    slug: str = Field(nullable=False)
-    parent_id: int = Field(default=0)
-    # 层级路径，如 /1/3/7/
-    path: str = Field(nullable=False)
-    # 层级深度，顶级为1
-    level: int = Field(nullable=False)
-    # 排序值，越小越靠前
-    sort: int = Field(default=0, nullable=False)
-    is_deleted: bool = Field(default=False)
-
-    __table_args__ = (
-        Index(
-            "uq_category_name", "name", unique=True,
-            postgresql_where=text("NOT is_deleted"),
-            sqlite_where=text("NOT is_deleted"),
-        ),
-        Index(
-            "uq_category_slug", "slug", unique=True,
-            postgresql_where=text("NOT is_deleted"),
-            sqlite_where=text("NOT is_deleted"),
-        ),
-    )
-
-    articles: List['Article'] = Relationship(
-        back_populates="categories",
-        sa_relationship_kwargs= {
-            "secondary": "article_category",
-            "primaryjoin": "Category.id == ArticleCategory.category_id",
-            "secondaryjoin": "Article.id == ArticleCategory.article_id",
-        }
-    )
 
 class Article(SQLModel, table=True):
     __tablename__: str = "article"
 
     id: int = Field(primary_key=True, default=None)
     slug: str = Field(unique=True, default_factory=generate_slug)
-    cover_img_slug: Optional[str] = Field(default=None, nullable=True)
+    cover_img_slug: str | None = Field(default=None, nullable=True)
     title: str = Field(nullable=False)
-    content: Optional[str] = Field(default=None, nullable=True)
+    content: str | None = Field(default=None, nullable=True)
     user_id: int
     is_hidden: bool = Field(default=False)
     is_recommended: bool = Field(default=False)
@@ -70,17 +37,15 @@ class Article(SQLModel, table=True):
     is_deleted: bool = Field(default=False)
     create_at: datetime = Field(default_factory=datetime.now)
 
-    categories: List['Category'] = Relationship(
+    categories: list[Category] = Relationship(
         back_populates="articles",
         sa_relationship_kwargs={
             "secondary": "article_category",
             "primaryjoin": "Article.id == ArticleCategory.article_id",
             "secondaryjoin": "Category.id == ArticleCategory.category_id",
-        }
+        },
     )
-    user: 'User' = Relationship(
+    user: "User" = Relationship(
         back_populates="articles",
-        sa_relationship_kwargs={
-            "primaryjoin": "User.id == foreign(Article.user_id)"
-        }
+        sa_relationship_kwargs={"primaryjoin": "User.id == foreign(Article.user_id)"},
     )
