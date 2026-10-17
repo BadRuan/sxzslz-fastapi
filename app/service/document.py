@@ -3,7 +3,7 @@ from os import path, makedirs, remove
 from pathlib import Path
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.settings import upload_dir
-from app.schema import PageResponse
+from app.schema import DocumentOut, PageResponse
 from app.model import Document
 from app.model.document import generate_slug
 from app.dao import DocumentCrud
@@ -17,14 +17,14 @@ class DocumentService:
     
     async def list_paginated(
         self, page: int, page_size: int
-    ) -> PageResponse[Document]:
+    ) -> PageResponse[DocumentOut]:
         items, total = await self.crud.list_paginated(page, page_size)
         return PageResponse(
-            data=items,
+            data=[DocumentOut.model_validate(i) for i in items],
             total=total,
             page=page,
             page_size=page_size,
-            has_next=False,
+            has_next=page * page_size < total,
         )
     
     async def add(self, filename: str, mime_type: str, content: bytes) -> Optional[Document]:
