@@ -120,7 +120,7 @@ class CategoryCrud:
         # 同步更新所有后代的路径与层级
         descendants = (await self.session.exec(
             select(Category).where(
-                Category.path.like(f"{old_path}%"),
+                Category.path.like(f"{old_path}%"), # type: ignore
                 Category.id != category.id,
             )
         )).all()
@@ -135,7 +135,7 @@ class CategoryCrud:
         # 级联软删整棵子树，保证分类树接口与平铺接口行为一致
         descendants = (await self.session.exec(
             select(Category).where(
-                Category.path.like(f"{category.path}%"),
+                Category.path.like(f"{category.path}%"), # type: ignore
                 Category.is_deleted == False,  # noqa: E712
             )
         )).all()

@@ -48,10 +48,10 @@ class ArticleCrud:
             # EXISTS 避免多对多 join 产生重复行；只命中未删除的分类
             related = (
                 select(ArticleCategory.article_id)
-                .join(Category, Category.id == ArticleCategory.category_id)
+                .join(Category, Category.id == ArticleCategory.category_id) # type: ignore
                 .where(
                     ArticleCategory.article_id == Article.id,
-                    Category.path.like(f"{category.path}%"),
+                    Category.path.like(f"{category.path}%"), # type: ignore
                     Category.is_deleted == False,  # noqa: E712
                 )
             )
@@ -72,7 +72,7 @@ class ArticleCrud:
             return []
         categories = (await self.session.exec(
             select(Category).where(
-                Category.id.in_(category_ids),
+                Category.id.in_(category_ids), # type: ignore
                 Category.is_deleted == False,  # noqa: E712
             )
         )).all()

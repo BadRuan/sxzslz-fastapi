@@ -12,4 +12,5 @@ wheels/
 .codegraph
 .claude/
 .superpowers/
-./mimocode/
+.mimocode/
+.ruff_cache/

@@ -1,11 +1,9 @@
 import asyncio
 from pathlib import Path
-
 from alembic import command
 from alembic.config import Config
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
-
 from app.settings import settings
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent

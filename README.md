@@ -1,76 +1,27 @@
 # sxzslz-fastapi
 
-基于 FastAPI 的异步 Web API 服务，提供分类、文章的增删改查与分页查询能力。
+基于 FastAPI 的异步内容 API，提供分类 / 文章 / 图片 / 文件的管理能力，配套 JWT 鉴权。
+
+前端对接只需关注两件事：**登录拿 token**、**按下方接口文档调用**。
 
 ## 技术栈
 
 - **框架**: FastAPI
-- **ORM**: SQLModel (基于 SQLAlchemy + Pydantic)
-- **数据库**: PostgreSQL
-- **异步驱动**: asyncpg
+- **ORM**: SQLModel（SQLAlchemy + Pydantic）
+- **数据库**: PostgreSQL + asyncpg
 - **包管理**: uv
 - **密码哈希**: argon2-cffi
-- **测试**: pytest + pytest-asyncio + aiosqlite（内存数据库，无需外部依赖）
-
-## 项目结构
-
-```
-sxzslz-fastapi/
-├── app/
-│   ├── dao/              # 数据访问层（CRUD）
-│   │   ├── article.py    #   ArticleCrud
-│   │   ├── category.py   #   CategoryCrud
-│   │   ├── user.py
-│   │   ├── image.py
-│   │   └── document.py
-│   ├── model/            # 数据模型（SQLModel）
-│   │   ├── article.py    #   Article / Category / ArticleCategory
-│   │   ├── user.py
-│   │   ├── image.py
-│   │   └── document.py
-│   ├── routers/          # 路由层（API 接口）
-│   │   ├── base.py
-│   │   ├── category.py
-│   │   ├── article.py
-│   │   ├── image.py
-│   │   └── document.py
-│   ├── service/          # 业务逻辑层
-│   │   ├── category.py   #   CategoryService
-│   │   ├── article.py    #   ArticleService
-│   │   ├── user.py
-│   │   ├── image.py
-│   │   └── document.py
-│   ├── utils/            # 工具函数
-│   ├── auth.py           # JWT 签发/校验 + get_current_user
-│   ├── database.py       # 数据库连接与 Alembic 启动迁移
-│   ├── schema.py         # 请求/响应模型（含分页、登录）
-│   └── settings.py       # 环境变量配置
-├── alembic/              # 数据库迁移
-├── tests/                # 测试（dao / service / API 层）
-│   ├── conftest.py
-│   ├── test_category_dao.py
-│   ├── test_category_service.py
-│   ├── test_article_dao.py
-│   ├── test_article_service.py
-│   ├── test_article_api.py
-│   ├── test_auth_api.py
-│   └── test_migrations.py
-├── main.py               # 应用入口
-├── pyproject.toml        # 项目依赖与配置
-└── .env                  # 环境变量（需自行创建）
-```
+- **鉴权**: JWT（PyJWT，HS256）
 
 ## 快速开始
 
-### 1. 环境准备
+### 环境要求
 
 - Python 3.12+
-- PostgreSQL 数据库
-- [uv](https://docs.astral.sh/uv/) 包管理器
+- PostgreSQL
+- [uv](https://docs.astral.sh/uv/)
 
-### 2. 配置环境变量
-
-创建 `.env` 文件：
+### 配置 `.env`
 
 ```env
 DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/dbname
@@ -82,164 +33,491 @@ CORS_ORIGINS=http://localhost:3000
 ACCESS_TOKEN_EXPIRE_MINUTES=720
 ```
 
-> `DEFAULT_USER_ID` 为创建文章时的默认作者 ID，需对应数据库中已存在的用户。  
-> `CORS_ORIGINS` 为逗号分隔的允许来源。  
+> `DEFAULT_USER_ID` 为创建文章时的默认作者 ID，需对应数据库中已存在的用户。
+> `CORS_ORIGINS` 为逗号分隔的允许来源。
 > `SECRET_KEY` 用于 JWT 签名，生产环境务必更换。
 
-### 3. 安装依赖
+### 安装并启动
 
 ```bash
 uv sync
+uv run fastapi dev              # 开发模式，默认 127.0.0.1:8000，热重载
+uv run fastapi dev --host 0.0.0.0 --port 8088   # 指定地址端口
+uv run python main.py           # 生产模式，监听 0.0.0.0:8088
 ```
 
-### 4. 启动服务（开发模式）
+启动后可访问 Swagger 文档：<http://localhost:8000/docs>
 
-```bash
-uv run fastapi dev
+---
+
+## 鉴权
+
+读接口（`GET`）公开访问；写操作（`POST` / `PATCH` / `DELETE`）需要携带 JWT。
+
+### 1. 登录获取 token
+
+```http
+POST /auth/login
+Content-Type: application/json
+
+{
+  "username": "your_username",
+  "password": "your_password"
+}
 ```
 
-`fastapi dev` 会使用 `pyproject.toml` 中配置的 `[tool.fastapi] entrypoint = "main:app"`，
-默认开启热重载，监听 `127.0.0.1:8000`。
-
-如需指定主机与端口：
-
-```bash
-uv run fastapi dev --host 0.0.0.0 --port 8088
-```
-
-启动后访问：
-
-- API 文档（Swagger UI）: <http://localhost:8000/docs>
-- ReDoc 文档: <http://localhost:8000/redoc>
-
-## API 接口
-
-> **鉴权**：读接口公开；写操作（`POST` / `PATCH` / `DELETE`）需请求头 `Authorization: Bearer <token>`。  
-> 登录获取 token：`POST /auth/login`，请求体 `{"username": "...", "password": "..."}`，响应 `{"access_token": "...", "token_type": "bearer"}`。  
-> `GET /auth/me` 返回当前登录用户。未带 token 或 token 无效时返回 401。
-
-### 基础信息 `/base`
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/base/` | 获取分类树与用户列表 |
-
-### 分类模块 `/categories`
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/categories/` | 创建分类 |
-| GET | `/categories/` | 获取所有分类（扁平列表） |
-| GET | `/categories/{id}` | 获取单个分类 |
-| PATCH | `/categories/{id}` | 修改分类 |
-| DELETE | `/categories/{id}` | 删除分类（软删除，级联软删整棵子树） |
-
-**创建分类请求体**：
+**成功响应** `200`：
 
 ```json
 {
-    "name": "财务信息",
-    "slug": "caiwu",
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer"
+}
+```
+
+**失败响应** `401`：
+
+```json
+{"detail": "用户名或密码错误"}
+```
+
+### 2. 携带 token
+
+之后的写操作请求都带上请求头：
+
+```
+Authorization: Bearer <access_token>
+```
+
+**Postman 用法**：Authorization → Type 选 **Bearer Token** → Token 栏粘贴 `access_token` 的值（不要带 `Bearer` 前缀，Postman 自动加）。
+
+### 3. 获取当前登录用户
+
+```http
+GET /auth/me
+Authorization: Bearer <access_token>
+```
+
+**响应** `200`：
+
+```json
+{
+  "id": 4,
+  "slug": "a1b2c3d4e5f6",
+  "nickname": "其他"
+}
+```
+
+### 错误码约定
+
+| 状态码 | 含义 | 响应体 |
+|--------|------|--------|
+| 200 | 成功 | 正常数据 |
+| 201 | 创建成功 | 新建资源 |
+| 204 | 删除成功 | 空 |
+| 400 | 业务校验失败（如重名） | `{"detail": "..."}` |
+| 401 | 未认证 / token 无效 | `{"detail": "未提供认证凭据"}` |
+| 404 | 资源不存在 | `{"detail": "..."}` |
+| 422 | 请求参数格式非法 | FastAPI 校验错误详情 |
+
+---
+
+## 接口总览
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|------|------|------|------|
+| POST | `/auth/login` | ✗ | 登录，返回 JWT |
+| GET | `/auth/me` | ✓ | 获取当前登录用户 |
+| GET | `/base/` | ✗ | 首页基础信息（分类树 + 用户列表） |
+| GET | `/categories/` | ✗ | 分类列表（扁平） |
+| POST | `/categories/` | ✓ | 创建分类 |
+| GET | `/categories/{id}` | ✗ | 获取单个分类 |
+| PATCH | `/categories/{id}` | ✓ | 修改分类 |
+| DELETE | `/categories/{id}` | ✓ | 删除分类（级联软删子树） |
+| GET | `/articles/` | ✗ | 文章分页列表 |
+| POST | `/articles/` | ✓ | 创建文章 |
+| GET | `/articles/{slug}` | ✗ | 文章详情 |
+| PATCH | `/articles/{slug}` | ✓ | 修改文章 |
+| DELETE | `/articles/{slug}` | ✓ | 删除文章（软删除） |
+| GET | `/image/` | ✗ | 图片分页列表 |
+| POST | `/image/` | ✗ | 上传图片 |
+| GET | `/image/{slug}` | ✗ | 获取图片文件 |
+| GET | `/document/` | ✗ | 文件分页列表 |
+| POST | `/document/` | ✗ | 上传文件 |
+| GET | `/document/{slug}` | ✗ | 下载文件 |
+
+---
+
+## 基础信息
+
+### GET `/base/`
+
+返回首页需要的分类树与用户列表。
+
+**响应** `200`：
+
+```json
+{
+  "category": [
+    {
+      "id": 1,
+      "name": "单位概况",
+      "slug": "gaikuang",
+      "path": "/1/",
+      "level": 1,
+      "sort": 0,
+      "children": []
+    },
+    {
+      "id": 8,
+      "name": "财务信息",
+      "slug": "caiwu",
+      "path": "/8/",
+      "level": 1,
+      "sort": 0,
+      "children": [
+        {
+          "id": 9,
+          "name": "泵站托管",
+          "slug": "tuoguan",
+          "path": "/8/9/",
+          "level": 2,
+          "sort": 0,
+          "children": []
+        }
+      ]
+    }
+  ],
+  "user": [
+    {"id": 1, "slug": "zhongxinzhan", "nickname": "芜湖市鸠江区沈巷镇水利站"}
+  ]
+}
+```
+
+---
+
+## 分类模块 `/categories`
+
+### GET `/categories/`
+
+返回所有分类的扁平列表（含 `parent_id`，前端可自行组树）。
+
+**响应** `200`：`CategoryOut` 数组
+
+```json
+[
+  {
+    "id": 1,
+    "name": "单位概况",
+    "slug": "gaikuang",
     "parent_id": 0,
+    "path": "/1/",
+    "level": 1,
     "sort": 0
-}
+  }
+]
 ```
 
-- `name` / `slug`：必填，对**未删除**的分类唯一（软删后可被新分类复用）
-- `parent_id`：父分类 ID，`0` 表示顶级分类（默认 `0`）
-- `sort`：排序值，越小越靠前（默认 `0`）
+### POST `/categories/`
 
-**修改分类请求体**（所有字段可选，仅更新传入的字段）：
+**请求体**：
 
 ```json
 {
-    "name": "财务公开",
-    "sort": 10
+  "name": "财务信息",
+  "slug": "caiwu",
+  "parent_id": 0,
+  "sort": 0
 }
 ```
 
-### 文章模块 `/articles`
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|------|------|------|------|------|
+| name | string | ✓ | — | 分类名称，对未删除分类唯一 |
+| slug | string | ✓ | — | URL 标识，对未删除分类唯一 |
+| parent_id | int | ✗ | 0 | 父分类 ID，`0` 表示顶级 |
+| sort | int | ✗ | 0 | 排序值，越小越靠前 |
 
-> 文章一律以 **slug** 定位（不再支持按 id 查询/修改/删除）。
+**响应** `201`：`CategoryOut`
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/articles/` | 创建文章 |
-| GET | `/articles/` | 分页获取文章列表 |
-| GET | `/articles/{slug}` | 获取文章详情 |
-| PATCH | `/articles/{slug}` | 修改文章 |
-| DELETE | `/articles/{slug}` | 删除文章（软删除） |
+**失败**：`400` 重名或 slug 冲突
 
-**分页查询参数**：
+### GET `/categories/{id}`
 
-| 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `page` | int | 1 | 页码，从 1 开始 |
-| `page_size` | int | 20 | 每页条数（最大 100） |
-| `category_id` | int | 无 | 按分类过滤（可选，含其全部子分类；分类不存在或已删除时返回空列表） |
+**响应** `200`：`CategoryOut`；`404` 分类不存在
+
+### PATCH `/categories/{id}`
+
+**请求体**（所有字段可选，只更新传入的字段）：
+
+```json
+{
+  "name": "财务公开",
+  "sort": 10
+}
+```
+
+**响应** `200`：`CategoryOut`
+
+**失败**：`400` 重名冲突；`404` 分类不存在
+
+### DELETE `/categories/{id}`
+
+软删除该分类，并**级联软删整棵子树**。
+
+**响应** `204` 空；`404` 分类不存在
+
+---
+
+## 文章模块 `/articles`
+
+> 文章一律以 **slug** 定位，不支持按 id 操作。
+
+### GET `/articles/`
+
+分页获取文章列表，支持按分类过滤。
+
+**查询参数**：
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| page | int | 1 | 页码，从 1 开始 |
+| page_size | int | 20 | 每页条数（1 ~ 100） |
+| category_id | int | 无 | 按分类过滤，含其全部子分类 |
 
 示例：`GET /articles/?page=2&page_size=10&category_id=3`
 
-**创建文章请求体**：
+**响应** `200`：
 
 ```json
 {
-    "title": "文章标题",
-    "content": "文章内容",
-    "cover_img_slug": "a1b2c3d4",
-    "is_hidden": false,
-    "is_recommended": true,
-    "category_ids": [1, 2]
+  "data": [
+    {
+      "id": 265,
+      "slug": "f46bd9b7776c42e4",
+      "cover_img_slug": "5894e8c2bc824d0abd7ed539115cb6b9.png",
+      "title": "新版支出预算表和人员支出指标测算表",
+      "is_hidden": true,
+      "is_recommended": false,
+      "create_at": "2026-09-24T11:22:01.682832",
+      "view_count": 1,
+      "like_count": 0,
+      "categories": [],
+      "user": {
+        "id": 20,
+        "slug": "jjqczj",
+        "nickname": "芜湖市鸠江区财政局"
+      }
+    }
+  ],
+  "total": 265,
+  "page": 1,
+  "page_size": 20,
+  "has_next": true
 }
 ```
 
-- `title`：必填
-- `content`、`cover_img_slug`：可选
-- `category_ids`：关联分类 ID 列表（文章与分类为多对多关系，默认空列表）
-- 作者由服务端默认指定（`DEFAULT_USER_ID`），无需前端传入
+> 列表响应不含 `content` 字段，详情接口才有。
 
-**修改文章请求体**（所有字段可选，仅更新传入的字段，`category_ids` 传入时整体替换关联分类）：
+### POST `/articles/`
+
+**请求体**：
 
 ```json
 {
-    "title": "新标题",
-    "is_recommended": false,
-    "category_ids": [2]
+  "title": "文章标题",
+  "content": "文章正文内容",
+  "cover_img_slug": "5894e8c2bc824d0abd7ed539115cb6b9.png",
+  "is_hidden": false,
+  "is_recommended": true,
+  "category_ids": [1, 2]
 }
 ```
 
-- 可空字段（`content`、`cover_img_slug`）显式传 `null` 表示清空；`category_ids` 传 `null` 表示清空全部关联分类
-- 非空字段（`title`、`is_hidden`、`is_recommended`）传 `null` 返回 400
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|------|------|------|------|------|
+| title | string | ✓ | — | 标题 |
+| content | string | ✗ | null | 正文内容 |
+| cover_img_slug | string | ✗ | null | 封面图 slug（来自图片上传接口的返回） |
+| is_hidden | bool | ✗ | false | 是否隐藏 |
+| is_recommended | bool | ✗ | false | 是否推荐 |
+| category_ids | int[] | ✗ | [] | 关联分类 ID 列表 |
 
-**分页列表响应**：
+> 作者由服务端指定（`DEFAULT_USER_ID`），前端无需传。
+
+**响应** `201`：`ArticleDetailOut`（含 `content`）
+
+### GET `/articles/{slug}`
+
+**响应** `200`：`ArticleDetailOut`
 
 ```json
 {
-    "data": [
-        {
-            "id": 1,
-            "slug": "a1b2c3d4e5f6g7h8",
-            "cover_img_slug": null,
-            "title": "文章标题",
-            "is_hidden": false,
-            "is_recommended": true,
-            "create_at": "2026-10-16T10:00:00",
-            "view_count": 0,
-            "like_count": 0,
-            "categories": [
-                {"id": 1, "name": "财务信息", "slug": "caiwu", "path": "/1/", "level": 1, "sort": 0, "children": []}
-            ],
-            "user": {"id": 1, "slug": "u1u1u1u1u1u1", "nickname": "管理员"}
-        }
-    ],
-    "total": 100,
-    "page": 1,
-    "page_size": 20,
-    "has_next": true
+  "id": 265,
+  "slug": "f46bd9b7776c42e4",
+  "cover_img_slug": "5894e8c2bc824d0abd7ed539115cb6b9.png",
+  "title": "新版支出预算表和人员支出指标测算表",
+  "content": "正文内容……",
+  "is_hidden": true,
+  "is_recommended": false,
+  "create_at": "2026-09-24T11:22:01.682832",
+  "view_count": 1,
+  "like_count": 0,
+  "categories": [],
+  "user": {
+    "id": 20,
+    "slug": "jjqczj",
+    "nickname": "芜湖市鸠江区财政局"
+  }
 }
 ```
 
-文章详情（`GET /articles/{slug}`）与创建/修改响应额外包含 `content` 字段。
+**失败**：`404` 文章不存在
+
+### PATCH `/articles/{slug}`
+
+**请求体**（所有字段可选，只更新传入的字段）：
+
+```json
+{
+  "title": "新标题",
+  "is_recommended": false,
+  "category_ids": [2]
+}
+```
+
+**null 的语义**：
+
+- 可空字段（`content` / `cover_img_slug` / `category_ids`）显式传 `null` 表示**清空**
+- 非空字段（`title` / `is_hidden` / `is_recommended`）传 `null` 返回 `400`
+- `category_ids` 传入时**整体替换**关联分类
+
+**响应** `200`：`ArticleDetailOut`
+
+### DELETE `/articles/{slug}`
+
+**响应** `204` 空；`404` 文章不存在
+
+---
+
+## 图片模块 `/image`
+
+### POST `/image/`
+
+上传图片，表单字段名为 `file`。
+
+支持格式：JPG / PNG / WebP。上传后服务端自动生成 WebP 预览图。
+
+**请求**（`multipart/form-data`）：
+
+```
+file: <二进制图片>
+```
+
+**响应** `200`：
+
+```json
+{
+  "filename": "photo.jpg",
+  "slug": "5894e8c2bc824d0abd7ed539115cb6b9.png",
+  "content_type": "image/jpeg"
+}
+```
+
+> 返回的 `slug` 可直接用于文章的 `cover_img_slug` 字段。
+
+**失败**：`400` 格式不支持或上传失败
+
+### GET `/image/`
+
+分页获取已上传图片列表。
+
+**查询参数**：
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| page | int | 1 | 页码 |
+| page_size | int | 30 | 每页条数（1 ~ 100） |
+
+**响应** `200`：
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "slug": "5894e8c2bc824d0abd7ed539115cb6b9.png",
+      "raw_filename": "photo.jpg",
+      "mime_type": "image/jpeg",
+      "size_bytes": 102400,
+      "view": 0,
+      "uploaded_at": "2026-10-17T10:00:00"
+    }
+  ],
+  "total": 50,
+  "page": 1,
+  "page_size": 30,
+  "has_next": true
+}
+```
+
+### GET `/image/{slug}`
+
+获取图片文件本体（浏览器可直接打开）。
+
+**查询参数**：
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| file_type | string | `preview` | `raw` 返回原图；`preview` 返回 WebP 预览图 |
+
+示例：`GET /image/5894e8c2bc824d0abd7ed539115cb6b9.png?file_type=raw`
+
+**响应**：图片二进制流（`Content-Type` 为图片 MIME 类型）
+
+---
+
+## 文件模块 `/document`
+
+### POST `/document/`
+
+上传文档，表单字段名为 `file`。
+
+支持格式：txt / pdf / doc / docx / xls / xlsx / ppt / pptx / zip。
+
+**请求**（`multipart/form-data`）：
+
+```
+file: <二进制文件>
+```
+
+**响应** `200`：
+
+```json
+{
+  "filename": "报告.pdf",
+  "slug": "a1b2c3d4e5f6g7h8",
+  "content_type": "application/pdf"
+}
+```
+
+**失败**：`400` 格式不支持或上传失败
+
+### GET `/document/`
+
+分页获取已上传文件列表。
+
+**查询参数**：同图片列表（`page` / `page_size`）
+
+**响应** `200`：结构同图片列表，字段一致
+
+### GET `/document/{slug}`
+
+下载文件（带原始文件名）。
+
+**响应**：文件二进制流（`Content-Disposition: attachment`）
+
+---
 
 ## 数据模型
 
@@ -248,84 +526,63 @@ uv run fastapi dev --host 0.0.0.0 --port 8088
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | int | 主键 |
-| slug | str | URL 唯一标识（自动生成） |
-| username | str | 用户名（唯一） |
-| nickname | str | 昵称（唯一） |
-| password | str | 密码（Argon2 加密） |
+| slug | string | URL 唯一标识 |
+| username | string | 用户名（唯一） |
+| nickname | string | 昵称（唯一） |
 
-### Category
+### CategoryOut
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | int | 主键 |
-| name | str | 分类名称（对未删除分类唯一，部分索引约束） |
-| slug | str | URL 唯一标识（对未删除分类唯一，部分索引约束） |
-| parent_id | int | 父分类 ID（0 表示顶级） |
-| path | str | 层级路径，如 `/1/3/7/` |
+| name | string | 分类名称 |
+| slug | string | URL 标识 |
+| parent_id | int | 父分类 ID（`0` 表示顶级） |
+| path | string | 层级路径，如 `/8/9/` |
 | level | int | 层级深度，顶级为 1 |
 | sort | int | 排序值，越小越靠前 |
-| is_deleted | bool | 软删除标记 |
 
-### Article
+### CategoryTree
+
+在 `CategoryOut` 基础上去掉 `parent_id`，增加 `children`（子分类数组，递归结构）。
+
+### ArticleOut / ArticleDetailOut
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | int | 主键 |
-| slug | str | URL 唯一标识（自动生成） |
-| cover_img_slug | str | 封面图标识（可选） |
-| title | str | 标题 |
-| content | str | 内容（可选） |
-| user_id | int | 作者 ID |
+| slug | string | URL 唯一标识 |
+| cover_img_slug | string \| null | 封面图 slug |
+| title | string | 标题 |
+| content | string \| null | 正文（仅详情接口返回） |
 | is_hidden | bool | 是否隐藏 |
 | is_recommended | bool | 是否推荐 |
+| create_at | datetime | 创建时间 |
 | view_count | int | 阅读量 |
 | like_count | int | 点赞数 |
-| is_deleted | bool | 软删除标记 |
-| create_at | datetime | 创建时间 |
-| categories | list | 关联分类（多对多） |
+| categories | CategoryTree[] | 关联分类 |
+| user | UserOut \| null | 作者 |
 
-## 测试
+### PageResponse
 
-项目使用 pytest，测试运行在内存 SQLite 数据库上（aiosqlite），无需额外的数据库配置。
+所有分页接口的统一响应结构：
 
-### 安装测试依赖
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| data | T[] | 当前页数据 |
+| total | int | 总记录数 |
+| page | int | 当前页码 |
+| page_size | int | 每页条数 |
+| has_next | bool | 是否有下一页 |
 
-```bash
-uv sync
-```
-
-`uv sync` 会一并安装 `[dependency-groups]` 中的 dev 依赖（pytest、pytest-asyncio、aiosqlite）。
-
-### 运行测试
-
-```bash
-uv run pytest
-```
-
-查看详细输出：
-
-```bash
-uv run pytest -v
-```
-
-### 测试说明
-
-- `tests/conftest.py`：使用内存 SQLite + `StaticPool` 提供隔离的测试引擎与 session，并提供 API 层测试客户端（`client`，走真实路由）与写操作鉴权头（`auth_headers`）。
-- `tests/test_category_dao.py` / `tests/test_article_dao.py`：数据访问层测试，覆盖创建、查询、更新、移动、软删除（含级联）、分页等。
-- `tests/test_category_service.py` / `tests/test_article_service.py`：业务层测试，覆盖唯一性校验（含软删复用与并发冲突）、默认作者、分页响应结构等。
-- `tests/test_article_api.py`：API 层测试，验证文章以 slug 定位的路由行为（200/204/404）。
-- `tests/test_auth_api.py`：登录、`/auth/me`、写操作 401 行为。
-- `tests/test_migrations.py`：验证 Alembic 迁移可在干净 SQLite 上建齐全部表。
+---
 
 ## 开发说明
 
-- 数据库结构由 **Alembic** 管理（`alembic/versions/`），启动时自动 `alembic upgrade head`。改模型后执行 `uv run alembic revision --autogenerate -m "..."` 并人工核对迁移文件。
-- **既有老库**（曾用 `create_all` 建表）首次接入时先执行 `uv run alembic stamp head`，否则升级会因表已存在而失败。
-- 分类与文章删除均为软删除（`is_deleted = True`），列表与详情查询自动过滤已删除记录。`category.name` / `category.slug` 为「仅活跃行」部分唯一索引，软删后可复用。
-- 分类与文章删除均为软删除（`is_deleted = True`），列表与详情查询自动过滤已删除记录。
-- 删除分类会**级联软删其整棵子树**，保证分类树接口（`/base/`）与平铺列表接口（`/categories/`）行为一致；已软删的分类不会出现在文章详情的 `categories` 中。
-- 分类支持多级层级（通过 `parent_id`、`path`、`level` 维护），移动分类时会同步更新其后代路径。
-- 文章通过 **slug** 定位（`GET` / `PATCH` / `DELETE /articles/{slug}`），slug 使用 UUID 自动生成；文章与分类为多对多关系。
-- 文章列表按 `category_id` 过滤时按 `path` 前缀匹配整个子树，且不产生重复行。
-- 密码使用 Argon2 算法加密存储；JWT 密钥为 `SECRET_KEY`，有效期 `ACCESS_TOKEN_EXPIRE_MINUTES`（默认 12 小时）。
-- 错误格式：404 / 400 返回 `{"detail": "..."}`（业务校验错误如重名返回 400）；未认证返回 401；请求参数格式非法返回 422。
+- 数据库结构由 Alembic 管理，启动时自动执行 `alembic upgrade head`。
+- 既有老库首次接入需先执行 `uv run alembic stamp head`，否则迁移会因表已存在而失败。
+- 分类与文章删除均为软删除（`is_deleted = true`），查询自动过滤已删除记录；分类 `name` / `slug` 软删后可复用。
+- 删除分类会级联软删整棵子树。
+- 文章通过 slug 定位，slug 由 UUID 自动生成。
+- 文章按 `category_id` 过滤时按 `path` 前缀匹配整个子树，不会产生重复行。
+- 上传文件落盘 `./uploads/` 目录。

@@ -34,7 +34,6 @@ app.include_router(category_router, prefix='/categories', tags=['分类模块'])
 app.include_router(article_router, prefix='/articles', tags=['文章模块'])
 app.include_router(image_router, prefix='/image', tags=['图片模块'])
 app.include_router(document_router, prefix='/document', tags=['文件模块'])
-# app.include_router(admin_router, prefix='/admin', tags=['后台管理模块'])
 
 
 if __name__ == '__main__':

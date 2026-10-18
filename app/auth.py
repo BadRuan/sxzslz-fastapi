@@ -1,11 +1,9 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlmodel.ext.asyncio.session import AsyncSession
-
 from app.database import get_session
 from app.model import User
 from app.settings import settings

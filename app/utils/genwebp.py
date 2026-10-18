@@ -1,7 +1,5 @@
 from os import path
-
 from PIL import Image
-
 from app.settings import upload_dir
 
 
