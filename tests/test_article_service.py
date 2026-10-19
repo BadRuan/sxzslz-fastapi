@@ -34,7 +34,8 @@ async def test_update_and_delete(session, default_user):
 
 async def test_create_with_category(session, default_user):
     cat_service = CategoryService(session)
-    cat = await cat_service.create(CategoryCreate(name="财务", slug="caiwu"))
+    parent = await cat_service.create(CategoryCreate(name="财务"))
+    cat = await cat_service.create(CategoryCreate(name="招标", parent_id=parent.id))
     service = ArticleService(session)
     out = await service.create(ArticleCreate(title="标题", category_ids=[cat.id]))
     assert [c.id for c in out.categories] == [cat.id]

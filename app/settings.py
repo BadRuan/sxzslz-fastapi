@@ -50,7 +50,7 @@ upload_dir = UploadDir(
 )
 
 allow_type: AllowType = AllowType(
-    image=["image/jpeg", "image/png", "image/webp"],
+    image=["image/jpeg", "image/png", "image/gif", "image/webp"],
     document=[
         "application/msword",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

@@ -1,12 +1,10 @@
-import asyncio
-from pathlib import Path
-from alembic import command
-from alembic.config import Config
+from sqlmodel import SQLModel
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.settings import settings
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# 导入全部模型以注册到 SQLModel.metadata：缺了这行，create_all 会一张表也建不出来
+from app import model  # noqa: F401
 
 engine = create_async_engine(
     settings.DATABASE_URL,
@@ -16,7 +14,7 @@ engine = create_async_engine(
 
 
 async def get_session():
-    """请求级会话：成功结束自动 commit，异常 rollback。DAO 层只 flush，不自行 commit。"""
+    """请求级会话：成功结束自动 commit，异常 rollback。DAO 层只 flush，不要自行 commit。"""
     async with AsyncSession(engine) as session:
         try:
             yield session
@@ -28,11 +26,7 @@ async def get_session():
             await session.close()
 
 
-def _upgrade_to_head() -> None:
-    cfg = Config(str(_PROJECT_ROOT / "alembic.ini"))
-    command.upgrade(cfg, "head")
-
-
 async def init_db() -> None:
-    """启动时执行 Alembic 迁移到 head（替代原先 create_all + 幂等 SQL）。"""
-    await asyncio.to_thread(_upgrade_to_head)
+    """启动时建表。create_all 幂等，已存在的表会跳过，因此每次启动都可安全执行一次。"""
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)

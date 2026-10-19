@@ -14,3 +14,5 @@ wheels/
 .superpowers/
 .mimocode/
 .ruff_cache/
+uploads/
+logs/

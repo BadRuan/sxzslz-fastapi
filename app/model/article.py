@@ -1,11 +1,8 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
-
 from sqlmodel import Field, Relationship, SQLModel
-
 from app.model.category import Category
-
 if TYPE_CHECKING:
     from app.model.user import User
 

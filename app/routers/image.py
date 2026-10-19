@@ -32,7 +32,7 @@ async def get_images(
 async def upload_image(file: UploadFile, session: AsyncSession = Depends(get_session)):
     if file.content_type not in allow_type.image:
         raise HTTPException(
-            status_code=400, detail="仅支持 JPG, PNG, WebP 格式的图片"
+            status_code=400, detail="仅支持 JPG, PNG, GIF, WebP 格式的图片"
         )
 
     filename = file.filename or "default_name"
@@ -65,12 +65,15 @@ async def get_image(
 
     if file_type == ImageType.raw:
         file_path = path.join(upload_dir.image_raw, slug)
+        media_type = image.mime_type
     else:
         slug_base, _ = path.splitext(slug)
         file_path = path.join(upload_dir.image_preview, slug_base + ".webp")
+        # 预览图固定为 WebP，不能沿用原图的 MIME
+        media_type = "image/webp"
 
     return FileResponse(
         path=file_path,
-        media_type=image.mime_type,
+        media_type=media_type,
         headers={"Content-Disposition": "inline"},
     )

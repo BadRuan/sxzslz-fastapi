@@ -1,8 +1,6 @@
 from typing import List, Optional, Tuple
-
 from sqlmodel import desc, func, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
-
 from app.model import Image
 
 
