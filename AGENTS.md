@@ -28,8 +28,8 @@ uv run pytest tests/test_article_api.py::test_name   # 单测
 - 分类为**严格二级**：`parent_id=0` 是一级分类（仅展示分组），否则为二级分类（挂文章）；不可建三级。
 - 文章只能关联**二级分类**（可同时多个）；文章查询按二级分类 id **精确匹配**，不聚合一级分类下的子分类。
 - 分类排序用 `sort`（越小越靠前，同级之间），PATCH 可调；列表/树按 `sort, id` 升序。
-- 文章软删除（`is_deleted`）；分类**硬删除**，删一级分类会**级联删除子分类**并清理 `article_category` 关联（业务层外键，无数据库外键）。
-- 文章作者固定取 `settings.DEFAULT_USER_ID`（默认 1），前端不传作者。
+- 文章只有一个可见性字段 `is_deleted`（无 `is_hidden`）：`DELETE` 软删除进回收站，列表默认过滤已删文章，后台用 `GET /articles/?is_deleted=true` 枚举回收站、`POST /articles/{slug}/restore` 恢复（需登录，幂等）。分类**硬删除**，删一级分类会**级联删除子分类**并清理 `article_category` 关联（业务层外键，无数据库外键）。
+- 文章作者取当前登录用户（`POST /articles/` 从 JWT 解析）；`settings.DEFAULT_USER_ID` 仅作 service 层不传 `user_id` 时的兜底。`GET /articles/` 支持 `user_id` 过滤（后台展示登录账户文章）。
 - 上传落盘 `./uploads/`（`app/settings.py` 的 `upload_dir`）。
 - 业务校验错误：service 抛 `ValueError` → router 转 400 `{"detail": "..."}`；资源不存在 → 404；参数格式非法 → 422。
 - ArticleUpdate 的 null 语义：可空字段显式 `null` 表示清空；非空字段传 `null` 返回 400。
@@ -48,7 +48,7 @@ JWT Bearer（`pyjwt`，HS256，密钥 `settings.SECRET_KEY`）。
 - 表结构由 SQLModel 模型定义；`main.py` 的 lifespan 每次启动调用一次 `app/database.py:init_db()`，执行 `SQLModel.metadata.create_all` 自动建表（幂等，已存在的表跳过）。
 - `init_db()` 内部 `from app import model` 以注册全部模型——缺了这行 `create_all` 会建不出任何表。新增模型放进 `app/model/` 并在 `app/model/__init__.py` 导出即可。
 - `create_all` **不会修改已有表结构**：改字段后需对存量库手动执行 DDL，或清库重建。
-- `category.name` 全局唯一（`uq_category_name` 普通唯一索引）；分类硬删除后 name 可复用。分类表无 `slug` / `is_deleted` / `path` / `level` 字段。
+- `category.name` 全局唯一（模型层 `uq_category_name` 为唯一索引；存量库若还是旧的非唯一索引需自行 DDL，且要先清理重名）；分类硬删除后 name 可复用。分类表无 `slug` / `is_deleted` / `path` / `level` 字段。
 - 表间关联不使用数据库级外键，仅业务层关联（`article_category` 关联表）。
 - 测试：`tests/conftest.py` 用 `SQLModel.metadata.create_all`（SQLite）；`tests/test_init_db.py` 覆盖「启动自动执行一次」「建出全部表」「重复执行幂等」「无数据库外键」。
 

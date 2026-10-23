@@ -1,7 +1,7 @@
 from typing import List, Optional, Tuple
 from sqlalchemy import exists
 from sqlalchemy.orm import selectinload
-from sqlmodel import select, func, desc
+from sqlmodel import select, func, desc, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.model import Article, ArticleCategory, Category
 
@@ -20,17 +20,26 @@ class ArticleCrud:
             selectinload(Article.user),  # type: ignore
         )
 
-    async def get_by_slug(self, slug: str) -> Optional[Article]:
-        stmt = self._with_relations(
-            select(Article).where(Article.slug == slug, Article.is_deleted == False)  # noqa: E712
-        )
-        result = await self.session.exec(stmt)
+    async def get_by_slug(self, slug: str, include_deleted: bool = False) -> Optional[Article]:
+        stmt = select(Article).where(Article.slug == slug)
+        if not include_deleted:
+            stmt = stmt.where(Article.is_deleted == False)  # noqa: E712
+        result = await self.session.exec(self._with_relations(stmt))
         return result.first()
 
     async def list_paginated(
-        self, page: int, page_size: int, category_id: Optional[int] = None
+        self,
+        page: int,
+        page_size: int,
+        category_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+        is_deleted: bool = False,
     ) -> Tuple[List[Article], int]:
-        base = select(Article).where(Article.is_deleted == False)  # noqa: E712
+        """is_deleted=False 只返回未删除文章（默认前台/后台列表）；
+        is_deleted=True 只返回已删除文章（后台回收站）"""
+        base = select(Article).where(Article.is_deleted == is_deleted)
+        if user_id is not None:
+            base = base.where(Article.user_id == user_id)
         if category_id is not None:
             # 查询仅走二级分类：精确匹配关联，不做一级分类子树聚合
             related = (
@@ -73,7 +82,6 @@ class ArticleCrud:
         title: str,
         content: Optional[str],
         cover_img_slug: Optional[str],
-        is_hidden: bool,
         is_recommended: bool,
         user_id: int,
         category_ids: List[int],
@@ -82,7 +90,6 @@ class ArticleCrud:
             title=title,
             content=content,
             cover_img_slug=cover_img_slug,
-            is_hidden=is_hidden,
             is_recommended=is_recommended,
             user_id=user_id,
         )
@@ -111,6 +118,20 @@ class ArticleCrud:
         await self.session.flush()
         return article
 
+    async def increment_like(self, slug: str) -> Optional[int]:
+        """匿名点赞：原子自增 like_count，返回最新计数；文章不存在（或已删除）返回 None"""
+        result = await self.session.execute(
+            update(Article)
+            .where(Article.slug == slug, Article.is_deleted == False)  # noqa: E712
+            .values(like_count=Article.like_count + 1)
+        )
+        if result.rowcount == 0:
+            return None
+        count = (await self.session.exec(
+            select(Article.like_count).where(Article.slug == slug)
+        )).one()
+        return int(count)
+
     async def soft_delete(self, slug: str) -> bool:
         article = await self.get_by_slug(slug)
         if article is None:
@@ -118,3 +139,13 @@ class ArticleCrud:
         article.is_deleted = True
         await self.session.flush()
         return True
+
+    async def restore(self, slug: str) -> Optional[Article]:
+        """恢复软删除文章（幂等：未删除时直接返回原文章）；不存在返回 None"""
+        article = await self.get_by_slug(slug, include_deleted=True)
+        if article is None:
+            return None
+        if article.is_deleted:
+            article.is_deleted = False
+            await self.session.flush()
+        return article

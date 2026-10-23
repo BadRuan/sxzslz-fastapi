@@ -210,8 +210,10 @@ Authorization: Bearer <access_token>
 | GET | `/articles/` | ✗ | 文章分页列表 | `PageResponse[ArticleOut]` |
 | POST | `/articles/` | ✓ | 创建文章 | `ArticleDetailOut` |
 | GET | `/articles/{slug}` | ✗ | 文章详情 | `ArticleDetailOut` |
+| POST | `/articles/{slug}/like` | ✗ | 匿名点赞（+1） | `ArticleLikeOut` |
 | PATCH | `/articles/{slug}` | ✓ | 修改文章 | `ArticleDetailOut` |
-| DELETE | `/articles/{slug}` | ✓ | 删除文章（软删除） | 204 空 |
+| DELETE | `/articles/{slug}` | ✓ | 删除文章（软删除 → 回收站） | 204 空 |
+| POST | `/articles/{slug}/restore` | ✓ | 恢复回收站文章 | `ArticleDetailOut` |
 | GET | `/image/` | ✗ | 图片分页列表 | `PageResponse[ImageOut]` |
 | POST | `/image/` | ✗ | 上传图片 | `UploadResult` |
 | GET | `/image/{slug}` | ✗ | 获取图片（默认预览图） | 二进制流 |
@@ -232,7 +234,7 @@ Authorization: Bearer <access_token>
 3. **传封面**：`POST /image/`（`multipart/form-data`，字段名 `file`）→ 返回 `slug`。
 4. **建文章**：`POST /articles/`，`cover_img_slug` 填上一步的 `slug`，`category_ids` 填二级分类 id 数组。
 5. **展示封面**：`<img src="/image/{cover_img_slug}">` 默认返回已压缩的 WebP 预览图；需要原图加 `?file_type=raw`。
-6. **列表分页**：`GET /articles/?page=1&page_size=20`，用响应中的 `has_next` 判断是否还有下一页；`is_hidden` / `is_recommended` 由前端自行筛选展示。
+6. **列表分页**：`GET /articles/?page=1&page_size=20`，用响应中的 `has_next` 判断是否还有下一页；回收站文章由服务端过滤，`is_recommended` 由前端自行筛选展示。
 
 ---
 
@@ -366,10 +368,12 @@ Authorization: Bearer <access_token>
 | page | int | 1 | 页码，从 1 开始 |
 | page_size | int | 20 | 每页条数（1 ~ 100） |
 | category_id | int | 无 | 按**二级分类** id 精确过滤（不聚合一级分类下的子分类） |
+| user_id | int | 无 | 按作者用户 id 过滤（后台展示登录账户的文章） |
+| is_deleted | bool | false | `false` 只返回未删除文章；`true` 只返回回收站文章（后台用） |
 
-示例：`GET /articles/?page=2&page_size=10&category_id=3`
+示例：`GET /articles/?page=2&page_size=10&category_id=3&user_id=1`
 
-> 列表**不过滤** `is_hidden`：隐藏文章也会返回，是否展示由前端根据 `is_hidden` 决定。
+> 可见性由服务端的 `is_deleted` 统一过滤：前台/普通列表永远拿不到已删文章，后台回收站传 `is_deleted=true` 即可枚举被删文章再恢复。
 
 **响应** `200`：
 
@@ -381,7 +385,7 @@ Authorization: Bearer <access_token>
       "slug": "f46bd9b7776c42e4",
       "cover_img_slug": "5894e8c2bc824d0abd7ed539115cb6b9.png",
       "title": "新版支出预算表和人员支出指标测算表",
-      "is_hidden": true,
+      "is_deleted": false,
       "is_recommended": false,
       "create_at": "2026-09-24T11:22:01.682832",
       "view_count": 1,
@@ -412,7 +416,6 @@ Authorization: Bearer <access_token>
   "title": "文章标题",
   "content": "文章正文内容",
   "cover_img_slug": "5894e8c2bc824d0abd7ed539115cb6b9.png",
-  "is_hidden": false,
   "is_recommended": true,
   "category_ids": [9, 10]
 }
@@ -423,11 +426,10 @@ Authorization: Bearer <access_token>
 | title | string | ✓ | — | 标题 |
 | content | string | ✗ | null | 正文内容 |
 | cover_img_slug | string | ✗ | null | 封面图 slug（来自图片上传接口的返回） |
-| is_hidden | bool | ✗ | false | 是否隐藏 |
 | is_recommended | bool | ✗ | false | 是否推荐 |
 | category_ids | int[] | ✗ | [] | 关联**二级分类** ID 列表（可多个；一级分类或不存在的 id 返回 400） |
 
-> 作者由服务端指定（`DEFAULT_USER_ID`），前端无需传。
+> 作者为当前登录用户（取自 JWT），前端无需传；`DEFAULT_USER_ID` 仅作为不走 API 直接调用 service 时的兜底默认。
 
 **响应** `201`：`ArticleDetailOut`（含 `content`）
 
@@ -444,7 +446,7 @@ Authorization: Bearer <access_token>
   "cover_img_slug": "5894e8c2bc824d0abd7ed539115cb6b9.png",
   "title": "新版支出预算表和人员支出指标测算表",
   "content": "正文内容……",
-  "is_hidden": true,
+  "is_deleted": false,
   "is_recommended": false,
   "create_at": "2026-09-24T11:22:01.682832",
   "view_count": 1,
@@ -475,14 +477,37 @@ Authorization: Bearer <access_token>
 **null 的语义**：
 
 - 可空字段（`content` / `cover_img_slug` / `category_ids`）显式传 `null` 表示**清空**
-- 非空字段（`title` / `is_hidden` / `is_recommended`）传 `null` 返回 `400`
+- 非空字段（`title` / `is_recommended`）传 `null` 返回 `400`
 - `category_ids` 传入时**整体替换**关联分类
+- `is_deleted` 不走 PATCH：删除用 `DELETE`，恢复用 `POST /articles/{slug}/restore`
 
 **响应** `200`：`ArticleDetailOut`
 
+### POST `/articles/{slug}/like`
+
+匿名点赞：公开接口（无需 token），每次调用 `like_count` +1。前端可配合 localStorage 限制同一浏览器重复点赞。
+
+**响应** `200`：
+
+```json
+{"like_count": 12}
+```
+
+**失败**：`404` 文章不存在或已删除
+
 ### DELETE `/articles/{slug}`
 
-**响应** `204` 空；`404` 文章不存在
+软删除：文章移入回收站（`is_deleted = true`），前台列表/详情/点赞/修改一律不可达（`404`），后台可用 `GET /articles/?is_deleted=true` 找回。
+
+**响应** `204` 空；`404` 文章不存在（或已在回收站）
+
+### POST `/articles/{slug}/restore`
+
+恢复回收站文章：`is_deleted` 置回 `false`，文章重新出现在正常列表。需携带 token；对未删除文章调用是幂等空操作。
+
+**响应** `200`：`ArticleDetailOut`
+
+**失败**：`401` 未登录；`404` 文章不存在
 
 ---
 
@@ -667,11 +692,11 @@ file: <二进制文件>
 | cover_img_slug | string \| null | 封面图 slug，用于 `GET /image/{slug}` |
 | title | string | 标题 |
 | content | string \| null | 正文（**仅详情 / 创建 / 修改响应返回**，列表不含） |
-| is_hidden | bool | 是否隐藏（列表接口不过滤，前端自行决定展示） |
+| is_deleted | bool | 是否在回收站（`false` 才会出现在正常列表；列表接口已按 `is_deleted` 过滤） |
 | is_recommended | bool | 是否推荐 |
 | create_at | datetime | 创建时间 |
 | view_count | int | 阅读量（只读，当前无自增接口） |
-| like_count | int | 点赞数（只读，当前无点赞接口） |
+| like_count | int | 点赞数（通过 `POST /articles/{slug}/like` 自增） |
 | categories | CategoryTree[] | 关联分类（二级分类，可为空数组） |
 | user | UserOut \| null | 作者，可能为 `null` |
 
@@ -752,8 +777,8 @@ docker run -d -p 8088:8088 \
 ## 开发说明
 
 - 启动时自动执行一次 `init_db()` 建表（`SQLModel.metadata.create_all`，幂等，已存在的表跳过）。
-- `create_all` 不会修改已有表结构；调整字段后需对存量库手动执行 DDL，或清库重建。
-- 文章删除为软删除（`is_deleted = true`）；分类为**硬删除**（级联删除子分类并清理关联），分类 `name` 删除后可复用。
+- `create_all` 不会修改已有表结构；调整字段后需对存量库手动执行 DDL，或清库重建（本次合并可见性字段时对存量库执行过 `ALTER TABLE article DROP COLUMN is_hidden`）。
+- 文章只有 `is_deleted` 一个可见性字段：软删除（`DELETE` → `is_deleted = true`，进回收站），后台 `GET /articles/?is_deleted=true` 找回并用 `POST /articles/{slug}/restore` 恢复；分类为**硬删除**（级联删除子分类并清理关联），分类 `name` 删除后可复用。
 - 文章通过 slug 定位，slug 由 UUID 自动生成。
 - 文章只能关联二级分类；按 `category_id` 过滤时精确匹配该分类，不聚合子分类。
 - 表间关联不使用数据库外键，由业务层维护（`article_category` 关联表）。

@@ -63,3 +63,94 @@ async def test_delete_article_by_slug(client, session, auth_headers):
 async def test_delete_unknown_slug_returns_404(client, auth_headers):
     resp = await client.delete("/articles/no-such-slug", headers=auth_headers)
     assert resp.status_code == 404
+
+
+async def test_list_filter_by_user_id(client, session, default_user):
+    """GET /articles/?user_id= 按作者过滤（后台展示登录账户文章）"""
+    await _create(session, title="作者文章")
+    resp = await client.get(f"/articles/?user_id={default_user.id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["data"][0]["title"] == "作者文章"
+    assert body["data"][0]["user"]["id"] == default_user.id
+
+    resp2 = await client.get("/articles/?user_id=999")
+    assert resp2.status_code == 200
+    assert resp2.json()["total"] == 0
+
+
+async def test_create_article_owned_by_current_user(client, auth_headers):
+    """创建的文章归属当前登录用户（而非固定 DEFAULT_USER_ID）"""
+    resp = await client.post(
+        "/articles/", json={"title": "我的文章"}, headers=auth_headers
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["user"]["nickname"] == "管理员"
+
+
+async def test_like_article_anonymous(client, session):
+    """匿名点赞：公开接口，每次 +1，详情同步更新"""
+    out = await _create(session, title="点赞文章")
+    resp = await client.post(f"/articles/{out.slug}/like")
+    assert resp.status_code == 200
+    assert resp.json() == {"like_count": 1}
+
+    resp2 = await client.post(f"/articles/{out.slug}/like")
+    assert resp2.json() == {"like_count": 2}
+
+    detail = await client.get(f"/articles/{out.slug}")
+    assert detail.json()["like_count"] == 2
+
+
+async def test_like_unknown_article_returns_404(client):
+    resp = await client.post("/articles/no-such-slug/like")
+    assert resp.status_code == 404
+
+
+async def test_deleted_article_hidden_until_restored(client, session, auth_headers):
+    """软删除 → 前台列表/详情不可见；回收站可见；恢复后重新可见"""
+    out = await _create(session, title="待删文章")
+    resp = await client.delete(f"/articles/{out.slug}", headers=auth_headers)
+    assert resp.status_code == 204
+
+    # 正常列表与详情都不返回已删文章
+    normal = await client.get("/articles/")
+    assert normal.json()["total"] == 0
+    assert (await client.get(f"/articles/{out.slug}")).status_code == 404
+
+    # 回收站只返回已删文章
+    trash = await client.get("/articles/?is_deleted=true")
+    assert trash.status_code == 200
+    body = trash.json()
+    assert body["total"] == 1
+    assert body["data"][0]["slug"] == out.slug
+    assert body["data"][0]["is_deleted"] is True
+
+    # 恢复后回到正常列表
+    restored = await client.post(f"/articles/{out.slug}/restore", headers=auth_headers)
+    assert restored.status_code == 200
+    assert restored.json()["is_deleted"] is False
+    assert (await client.get(f"/articles/{out.slug}")).status_code == 200
+    assert (await client.get("/articles/")).json()["total"] == 1
+    assert (await client.get("/articles/?is_deleted=true")).json()["total"] == 0
+
+
+async def test_restore_requires_auth_and_valid_slug(client, session, auth_headers):
+    """恢复需要登录；未知 slug 返回 404"""
+    out = await _create(session)
+    assert (
+        await client.post(f"/articles/{out.slug}/restore")
+    ).status_code == 401
+    assert (
+        await client.post("/articles/no-such-slug/restore", headers=auth_headers)
+    ).status_code == 404
+
+
+async def test_article_out_has_is_deleted_not_is_hidden(client, session):
+    """响应体用 is_deleted 表达可见性，is_hidden 已移除"""
+    out = await _create(session)
+    data = (await client.get(f"/articles/{out.slug}")).json()
+    assert data["is_deleted"] is False
+    assert "is_hidden" not in data

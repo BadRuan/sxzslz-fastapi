@@ -16,7 +16,7 @@ class Category(SQLModel, table=True):
     parent_id: int = Field(default=0)
     sort: int = Field(default=0, nullable=False)
 
-    __table_args__ = (Index("uq_category_name", "name"),)
+    __table_args__ = (Index("uq_category_name", "name", unique=True),)
 
     articles: list["Article"] = Relationship(
         back_populates="categories",

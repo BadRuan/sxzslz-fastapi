@@ -27,7 +27,6 @@ class Article(SQLModel, table=True):
     title: str = Field(nullable=False)
     content: str | None = Field(default=None, nullable=True)
     user_id: int
-    is_hidden: bool = Field(default=False)
     is_recommended: bool = Field(default=False)
     view_count: int = Field(default=0)
     like_count: int = Field(default=0)

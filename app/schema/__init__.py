@@ -1,6 +1,7 @@
 from app.schema.article import (
     ArticleCreate,
     ArticleDetailOut,
+    ArticleLikeOut,
     ArticleOut,
     ArticleUpdate,
 )
@@ -18,6 +19,7 @@ from app.schema.user import BaseInfoOut, UserOut
 __all__ = [
     "ArticleCreate",
     "ArticleDetailOut",
+    "ArticleLikeOut",
     "ArticleOut",
     "ArticleUpdate",
     "BaseInfoOut",

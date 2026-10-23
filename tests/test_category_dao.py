@@ -66,7 +66,7 @@ async def test_delete_clears_article_links(session, default_user):
     art_crud = ArticleCrud(session)
     art = await art_crud.create(
         title="T", content=None, cover_img_slug=None,
-        is_hidden=False, is_recommended=False,
+        is_recommended=False,
         user_id=default_user.id, category_ids=[child.id],
     )
 
