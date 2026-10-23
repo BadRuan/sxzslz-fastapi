@@ -1,6 +1,5 @@
 .git
 .venv
-.env
 .mimocode
 .claude
 .superpowers
