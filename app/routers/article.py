@@ -49,8 +49,9 @@ async def list_articles(
 
 @router.get("/{slug}", response_model=ArticleDetailOut)
 async def get_article(slug: str, session: AsyncSession = Depends(get_session)):
+    """公开详情：每次访问 view_count +1（已删文章 404 且不计数）"""
     service = ArticleService(session)
-    article = await service.get_by_slug(slug)
+    article = await service.view(slug)
     if article is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")
     return article

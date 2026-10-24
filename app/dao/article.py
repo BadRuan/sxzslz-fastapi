@@ -132,6 +132,20 @@ class ArticleCrud:
         )).one()
         return int(count)
 
+    async def increment_view(self, slug: str) -> Optional[int]:
+        """浏览量：原子自增 view_count，返回最新计数；文章不存在（或已删除）返回 None"""
+        result = await self.session.execute(
+            update(Article)
+            .where(Article.slug == slug, Article.is_deleted == False)  # noqa: E712
+            .values(view_count=Article.view_count + 1)
+        )
+        if result.rowcount == 0:
+            return None
+        count = (await self.session.exec(
+            select(Article.view_count).where(Article.slug == slug)
+        )).one()
+        return int(count)
+
     async def soft_delete(self, slug: str) -> bool:
         article = await self.get_by_slug(slug)
         if article is None:

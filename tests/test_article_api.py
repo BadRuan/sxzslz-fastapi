@@ -148,6 +148,23 @@ async def test_restore_requires_auth_and_valid_slug(client, session, auth_header
     ).status_code == 404
 
 
+async def test_detail_view_count_increments(client, session):
+    """详情访问匿名自增 view_count，响应返回自增后的值"""
+    out = await _create(session, title="阅读量文章")
+    assert (await client.get(f"/articles/{out.slug}")).json()["view_count"] == 1
+    assert (await client.get(f"/articles/{out.slug}")).json()["view_count"] == 2
+
+
+async def test_deleted_article_detail_does_not_count(client, session, auth_headers):
+    """已删文章详情 404 且不消耗阅读量；恢复后继续正常计数"""
+    out = await _create(session, title="计数边界")
+    await client.delete(f"/articles/{out.slug}", headers=auth_headers)
+    assert (await client.get(f"/articles/{out.slug}")).status_code == 404
+    restored = await client.post(f"/articles/{out.slug}/restore", headers=auth_headers)
+    assert restored.json()["view_count"] == 0
+    assert (await client.get(f"/articles/{out.slug}")).json()["view_count"] == 1
+
+
 async def test_article_out_has_is_deleted_not_is_hidden(client, session):
     """响应体用 is_deleted 表达可见性，is_hidden 已移除"""
     out = await _create(session)

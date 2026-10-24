@@ -4,7 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.auth import get_current_user
 from app.database import get_session
+from app.model import User
 from app.schema import DocumentOut, PageResponse, UploadResult
 from app.service import DocumentService
 from app.settings import allow_type, upload_dir
@@ -24,7 +26,9 @@ async def get_documents(
 
 @router.post("/", response_model=UploadResult)
 async def upload_document(
-    file: UploadFile, session: AsyncSession = Depends(get_session)
+    file: UploadFile,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(get_current_user),
 ):
     if file.content_type not in allow_type.document:
         raise HTTPException(

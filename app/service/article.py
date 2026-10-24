@@ -49,6 +49,19 @@ class ArticleService:
             return None
         return ArticleDetailOut.model_validate(article)
 
+    async def view(self, slug: str) -> Optional[ArticleDetailOut]:
+        """详情访问：公开匿名，查文章并原子自增 view_count（已删/不存在返回 None，不计数）"""
+        article = await self.crud.get_by_slug(slug)
+        if article is None:
+            return None
+        view_count = await self.crud.increment_view(slug)
+        if view_count is None:
+            return None
+        out = ArticleDetailOut.model_validate(article)
+        # ORM 实例未感知裸 UPDATE，用自增后的计数覆盖
+        out.view_count = view_count
+        return out
+
     async def update(self, slug: str, data: ArticleUpdate) -> Optional[ArticleDetailOut]:
         article = await self.crud.update(slug, **data.model_dump(exclude_unset=True))
         if article is None:

@@ -364,6 +364,27 @@ async def test_increment_like_unknown_and_deleted(session, default_user):
     assert await crud.increment_like(art.slug) is None
 
 
+async def test_increment_view(session, default_user):
+    """浏览量：原子自增并返回最新计数；已删/不存在返回 None"""
+    crud = ArticleCrud(session)
+    art = await crud.create(
+        title="T", content=None, cover_img_slug=None,
+        is_recommended=False,
+        user_id=default_user.id, category_ids=[],
+    )
+    slug = art.slug
+    assert await crud.increment_view(slug) == 1
+    assert await crud.increment_view(slug) == 2
+
+    session.expire_all()
+    loaded = await crud.get_by_slug(slug)
+    assert loaded.view_count == 2
+
+    await crud.soft_delete(slug)
+    assert await crud.increment_view(slug) is None
+    assert await crud.increment_view("no-such-slug") is None
+
+
 async def test_list_paginated_splits_by_is_deleted(session, default_user):
     """is_deleted=False 只返回未删除文章；True 只返回回收站文章"""
     crud = ArticleCrud(session)

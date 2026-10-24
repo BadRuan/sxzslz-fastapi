@@ -5,7 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.auth import get_current_user
 from app.database import get_session
+from app.model import User
 from app.schema import ImageOut, PageResponse, UploadResult
 from app.service import ImageService
 from app.settings import allow_type, upload_dir
@@ -29,7 +31,11 @@ async def get_images(
 
 
 @router.post("/", response_model=UploadResult)
-async def upload_image(file: UploadFile, session: AsyncSession = Depends(get_session)):
+async def upload_image(
+    file: UploadFile,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(get_current_user),
+):
     if file.content_type not in allow_type.image:
         raise HTTPException(
             status_code=400, detail="仅支持 JPG, PNG, GIF, WebP 格式的图片"
