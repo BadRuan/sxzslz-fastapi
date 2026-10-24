@@ -165,6 +165,80 @@ async def test_deleted_article_detail_does_not_count(client, session, auth_heade
     assert (await client.get(f"/articles/{out.slug}")).json()["view_count"] == 1
 
 
+async def test_batch_category_add_and_remove(client, session, auth_headers):
+    """批量加入 → 按分类可见；批量移出 → 不可见；重复操作幂等"""
+    from app.dao import CategoryCrud
+
+    cat_crud = CategoryCrud(session)
+    parent = await cat_crud.create(name="批量父", parent_id=0, sort=0)
+    cat = await cat_crud.create(name="批量子", parent_id=parent.id, sort=99)
+    a = await _create(session, title="批量A")
+    b = await _create(session, title="批量B")
+
+    batch = {"slugs": [a.slug, b.slug], "category_id": cat.id, "mode": "add"}
+    resp = await client.post("/articles/batch-category", json=batch, headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"affected": 2}
+    assert (await client.get(f"/articles/?category_id={cat.id}")).json()["total"] == 2
+
+    # 幂等再加：关联不重复
+    resp2 = await client.post("/articles/batch-category", json=batch, headers=auth_headers)
+    assert resp2.json()["affected"] == 2
+    detail = (await client.get(f"/articles/{a.slug}")).json()
+    assert [c["id"] for c in detail["categories"]] == [cat.id]
+
+    batch["mode"] = "remove"
+    resp3 = await client.post("/articles/batch-category", json=batch, headers=auth_headers)
+    assert resp3.json()["affected"] == 2
+    assert (await client.get(f"/articles/?category_id={cat.id}")).json()["total"] == 0
+    assert (await client.get(f"/articles/{a.slug}")).json()["categories"] == []
+
+
+async def test_batch_category_errors(client, session, auth_headers):
+    """401 未登录；400 一级分类/未知 slug；422 空 slugs 或非法 mode"""
+    from app.dao import CategoryCrud
+
+    cat_crud = CategoryCrud(session)
+    top = await cat_crud.create(name="错误一级", parent_id=0, sort=0)
+    cat = await _level2_for_batch(cat_crud)
+    a = await _create(session)
+    valid = {"slugs": [a.slug], "category_id": cat.id, "mode": "add"}
+
+    assert (
+        await client.post("/articles/batch-category", json=valid)
+    ).status_code == 401
+
+    level1 = {**valid, "category_id": top.id}
+    assert (
+        await client.post("/articles/batch-category", json=level1, headers=auth_headers)
+    ).status_code == 400
+
+    unknown = {**valid, "slugs": ["no-such-slug"]}
+    assert (
+        await client.post("/articles/batch-category", json=unknown, headers=auth_headers)
+    ).status_code == 400
+
+    assert (
+        await client.post(
+            "/articles/batch-category",
+            json={**valid, "slugs": []},
+            headers=auth_headers,
+        )
+    ).status_code == 422
+    assert (
+        await client.post(
+            "/articles/batch-category",
+            json={**valid, "mode": "replace"},
+            headers=auth_headers,
+        )
+    ).status_code == 422
+
+
+async def _level2_for_batch(cat_crud):
+    parent = await cat_crud.create(name="错误父", parent_id=0, sort=0)
+    return await cat_crud.create(name="错误子", parent_id=parent.id, sort=0)
+
+
 async def test_article_out_has_is_deleted_not_is_hidden(client, session):
     """响应体用 is_deleted 表达可见性，is_hidden 已移除"""
     out = await _create(session)

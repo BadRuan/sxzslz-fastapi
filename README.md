@@ -178,7 +178,6 @@ Authorization: Bearer <access_token>
 | detail | 触发场景 |
 |--------|----------|
 | 用户名或密码错误 | 登录失败 |
-| 分类名称已存在 | 创建 / 修改分类时重名 |
 | 父分类不存在 | `parent_id` 指向的分类不存在 |
 | 仅支持二级分类，不能创建三级分类 | 在二级分类下再挂子分类 |
 | 一级分类不支持调整父级 | PATCH 给一级分类改 `parent_id` |
@@ -209,16 +208,17 @@ Authorization: Bearer <access_token>
 | DELETE | `/categories/{id}` | ✓ | 删除分类（级联删除子分类） | 204 空 |
 | GET | `/articles/` | ✗ | 文章分页列表 | `PageResponse[ArticleOut]` |
 | POST | `/articles/` | ✓ | 创建文章 | `ArticleDetailOut` |
+| POST | `/articles/batch-category` | ✓ | 批量加入/移出分类 | `ArticleBatchCategoryOut` |
 | GET | `/articles/{slug}` | ✗ | 文章详情 | `ArticleDetailOut` |
 | POST | `/articles/{slug}/like` | ✗ | 匿名点赞（+1） | `ArticleLikeOut` |
 | PATCH | `/articles/{slug}` | ✓ | 修改文章 | `ArticleDetailOut` |
 | DELETE | `/articles/{slug}` | ✓ | 删除文章（软删除 → 回收站） | 204 空 |
 | POST | `/articles/{slug}/restore` | ✓ | 恢复回收站文章 | `ArticleDetailOut` |
 | GET | `/image/` | ✗ | 图片分页列表 | `PageResponse[ImageOut]` |
-| POST | `/image/` | ✗ | 上传图片 | `UploadResult` |
+| POST | `/image/` | ✓ | 上传图片 | `UploadResult` |
 | GET | `/image/{slug}` | ✗ | 获取图片（默认预览图） | 二进制流 |
 | GET | `/document/` | ✗ | 文件分页列表 | `PageResponse[DocumentOut]` |
-| POST | `/document/` | ✗ | 上传文件 | `UploadResult` |
+| POST | `/document/` | ✓ | 上传文件 | `UploadResult` |
 | GET | `/document/{slug}` | ✗ | 下载文件 | 二进制流 |
 
 > 响应模型与[数据模型](#数据模型)章节一一对应；标 ✓ 的接口需携带 `Authorization: Bearer <token>`。
@@ -312,13 +312,13 @@ Authorization: Bearer <access_token>
 
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |------|------|------|------|------|
-| name | string | ✓ | — | 分类名称，全局唯一 |
+| name | string | ✓ | — | 分类名称（**允许重名**，不同父级下常见同名） |
 | parent_id | int | ✗ | 0 | 父分类 ID，`0` 表示一级分类；父分类必须是一级分类 |
 | sort | int | ✗ | 0 | 排序值，越小越靠前（同级之间） |
 
 **响应** `201`：`CategoryOut`
 
-**失败**：`400` 重名冲突，或父分类非法（不存在 / 尝试创建三级分类）
+**失败**：`400` 父分类非法（不存在 / 尝试创建三级分类）
 
 ### GET `/categories/{id}`
 
@@ -343,7 +343,7 @@ Authorization: Bearer <access_token>
 
 **响应** `200`：`CategoryOut`
 
-**失败**：`400` 重名冲突、父级调整非法（含 `parent_id=0` 试图升为一级）；`404` 分类不存在
+**失败**：`400` 父级调整非法（含 `parent_id=0` 试图升为一级）；`404` 分类不存在
 
 ### DELETE `/categories/{id}`
 
@@ -509,13 +509,43 @@ Authorization: Bearer <access_token>
 
 **失败**：`401` 未登录；`404` 文章不存在
 
+### POST `/articles/batch-category`
+
+批量将多篇文章**加入**或**移出**一个二级分类（后台勾选操作）。需携带 token。
+
+**请求体**：
+
+```json
+{
+  "slugs": ["f46bd9b7776c42e4", "05ec0dc53ad942ad"],
+  "category_id": 9,
+  "mode": "add"
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| slugs | string[] | ✓ | 文章 slug 列表（至少 1 个，去重后处理） |
+| category_id | int | ✓ | 目标分类 ID（必须是二级分类） |
+| mode | string | ✓ | `add` 加入 / `remove` 移出 |
+
+**语义**：幂等——`add` 只补缺失关联（不产生重复），`remove` 不在该分类也计数；只操作未删除文章。
+
+**响应** `200`：
+
+```json
+{"affected": 2}
+```
+
+**失败**：`401` 未登录；`400` 一级分类 / 分类不存在 / 任一 slug 不存在或已删除（整批不生效）；`422` slugs 为空或 mode 非法
+
 ---
 
 ## 图片模块 `/image`
 
 ### POST `/image/`
 
-上传图片，表单字段名为 `file`。
+上传图片，表单字段名为 `file`。**需携带 token**（未登录返回 `401`）。
 
 支持格式：JPG / PNG / GIF / WebP。上传后服务端自动生成 WebP 预览图，PNG / GIF 的**透明背景会保留**（不透明格式输出无 alpha 通道的 WebP）。
 
@@ -597,7 +627,7 @@ file: <二进制图片>
 
 ### POST `/document/`
 
-上传文档，表单字段名为 `file`。
+上传文档，表单字段名为 `file`。**需携带 token**（未登录返回 `401`）。
 
 支持格式：txt / pdf / doc / docx / xls / xlsx / ppt / pptx / zip。
 
@@ -675,7 +705,7 @@ file: <二进制文件>
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | int | 主键 |
-| name | string | 分类名称（全局唯一） |
+| name | string | 分类名称（允许重名） |
 | parent_id | int | 父分类 ID（`0` 一级分类，否则二级分类） |
 | sort | int | 排序值，越小越靠前 |
 
@@ -695,7 +725,7 @@ file: <二进制文件>
 | is_deleted | bool | 是否在回收站（`false` 才会出现在正常列表；列表接口已按 `is_deleted` 过滤） |
 | is_recommended | bool | 是否推荐 |
 | create_at | datetime | 创建时间 |
-| view_count | int | 阅读量（只读，当前无自增接口） |
+| view_count | int | 阅读量（每次公开详情访问 `GET /articles/{slug}` 自增 +1） |
 | like_count | int | 点赞数（通过 `POST /articles/{slug}/like` 自增） |
 | categories | CategoryTree[] | 关联分类（二级分类，可为空数组） |
 | user | UserOut \| null | 作者，可能为 `null` |

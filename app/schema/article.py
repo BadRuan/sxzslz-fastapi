@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.schema.category import CategoryTree
 from app.schema.user import UserOut
@@ -63,3 +64,17 @@ class ArticleUpdate(BaseModel):
     cover_img_slug: str | None = None
     is_recommended: bool | None = None
     category_ids: list[int] | None = None
+
+
+class ArticleBatchCategoryIn(BaseModel):
+    """批量把多篇文章加入/移出某个二级分类（幂等；未知/已删 slug 整批 400）"""
+
+    slugs: list[str] = Field(min_length=1)
+    category_id: int
+    mode: Literal["add", "remove"]
+
+
+class ArticleBatchCategoryOut(BaseModel):
+    """affected = 成功处理的未删除文章数"""
+
+    affected: int

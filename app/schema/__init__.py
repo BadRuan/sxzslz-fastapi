@@ -1,4 +1,6 @@
 from app.schema.article import (
+    ArticleBatchCategoryIn,
+    ArticleBatchCategoryOut,
     ArticleCreate,
     ArticleDetailOut,
     ArticleLikeOut,
@@ -17,6 +19,8 @@ from app.schema.file import DocumentOut, ImageOut, UploadResult
 from app.schema.user import BaseInfoOut, UserOut
 
 __all__ = [
+    "ArticleBatchCategoryIn",
+    "ArticleBatchCategoryOut",
     "ArticleCreate",
     "ArticleDetailOut",
     "ArticleLikeOut",

@@ -42,11 +42,6 @@ class CategoryCrud:
         result = await self.session.exec(stmt)
         return list(result.all())
 
-    async def get_by_name(self, name: str) -> Optional[Category]:
-        stmt = select(Category).where(Category.name == name)
-        result = await self.session.exec(stmt)
-        return result.first()
-
     async def create(self, *, name: str, parent_id: int, sort: int) -> Category:
         if parent_id != 0:
             parent = await self.get_raw_by_id(parent_id)

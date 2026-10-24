@@ -29,6 +29,8 @@ uv run pytest tests/test_article_api.py::test_name   # 单测
 - 文章只能关联**二级分类**（可同时多个）；文章查询按二级分类 id **精确匹配**，不聚合一级分类下的子分类。
 - 分类排序用 `sort`（越小越靠前，同级之间），PATCH 可调；列表/树按 `sort, id` 升序。
 - 文章只有一个可见性字段 `is_deleted`（无 `is_hidden`）：`DELETE` 软删除进回收站，列表默认过滤已删文章，后台用 `GET /articles/?is_deleted=true` 枚举回收站、`POST /articles/{slug}/restore` 恢复（需登录，幂等）。分类**硬删除**，删一级分类会**级联删除子分类**并清理 `article_category` 关联（业务层外键，无数据库外键）。
+- 批量分类：`POST /articles/batch-category`（需登录）`{slugs[], category_id, mode: add|remove}`，只作用于未删除文章，幂等；任一 slug 不存在/无效分类 → 400 整批不生效（直接操作 `article_category` 关联表）。
+- `view_count` 在公开详情 `GET /articles/{slug}` 成功访问时原子 +1（已删文章 404 且不计数）；`like_count` 走 `POST /articles/{slug}/like`。图片/文件**上传**需登录（读接口公开）。
 - 文章作者取当前登录用户（`POST /articles/` 从 JWT 解析）；`settings.DEFAULT_USER_ID` 仅作 service 层不传 `user_id` 时的兜底。`GET /articles/` 支持 `user_id` 过滤（后台展示登录账户文章）。
 - 上传落盘 `./uploads/`（`app/settings.py` 的 `upload_dir`）。
 - 业务校验错误：service 抛 `ValueError` → router 转 400 `{"detail": "..."}`；资源不存在 → 404；参数格式非法 → 422。
@@ -48,7 +50,7 @@ JWT Bearer（`pyjwt`，HS256，密钥 `settings.SECRET_KEY`）。
 - 表结构由 SQLModel 模型定义；`main.py` 的 lifespan 每次启动调用一次 `app/database.py:init_db()`，执行 `SQLModel.metadata.create_all` 自动建表（幂等，已存在的表跳过）。
 - `init_db()` 内部 `from app import model` 以注册全部模型——缺了这行 `create_all` 会建不出任何表。新增模型放进 `app/model/` 并在 `app/model/__init__.py` 导出即可。
 - `create_all` **不会修改已有表结构**：改字段后需对存量库手动执行 DDL，或清库重建。
-- `category.name` 全局唯一（模型层 `uq_category_name` 为唯一索引；存量库若还是旧的非唯一索引需自行 DDL，且要先清理重名）；分类硬删除后 name 可复用。分类表无 `slug` / `is_deleted` / `path` / `level` 字段。
+- `category.name` **允许重名**（无 DB 唯一约束、无应用层查重；不同父级下同名常见。注意：前端按名称匹配分类的配置取首个匹配，重名可能歧义）；分类硬删除后 name 可复用。分类表无 `slug` / `is_deleted` / `path` / `level` 字段。
 - 表间关联不使用数据库级外键，仅业务层关联（`article_category` 关联表）。
 - 测试：`tests/conftest.py` 用 `SQLModel.metadata.create_all`（SQLite）；`tests/test_init_db.py` 覆盖「启动自动执行一次」「建出全部表」「重复执行幂等」「无数据库外键」。
 

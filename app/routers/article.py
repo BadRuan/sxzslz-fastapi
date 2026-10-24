@@ -6,6 +6,8 @@ from app.database import get_session
 from app.model import User
 from app.service import ArticleService
 from app.schema import (
+    ArticleBatchCategoryIn,
+    ArticleBatchCategoryOut,
     ArticleCreate,
     ArticleUpdate,
     ArticleOut,
@@ -27,6 +29,20 @@ async def create_article(
     service = ArticleService(session)
     try:
         return await service.create(data, user_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/batch-category", response_model=ArticleBatchCategoryOut)
+async def batch_apply_category(
+    data: ArticleBatchCategoryIn,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(get_current_user),
+):
+    """批量将多篇文章加入/移出一个二级分类（幂等；未知 slug 或无效分类返回 400）"""
+    service = ArticleService(session)
+    try:
+        return await service.batch_category(data)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 

@@ -385,6 +385,65 @@ async def test_increment_view(session, default_user):
     assert await crud.increment_view("no-such-slug") is None
 
 
+async def test_batch_apply_category_add_remove(session, default_user):
+    """批量加入/移出分类：幂等（add 无重复关联，remove 不在也计数）"""
+    cat_crud = CategoryCrud(session)
+    cat = await _level2_cat(cat_crud, "批量", "批量子类")
+    cat_id = cat.id
+    crud = ArticleCrud(session)
+    a = await crud.create(
+        title="A", content=None, cover_img_slug=None,
+        is_recommended=False, user_id=default_user.id, category_ids=[],
+    )
+    b = await crud.create(
+        title="B", content=None, cover_img_slug=None,
+        is_recommended=False, user_id=default_user.id, category_ids=[],
+    )
+    # expire_all 之后 ORM 对象属性不可再同步读取，提前缓存标量
+    slug_a, slug_b = a.slug, b.slug
+
+    assert await crud.batch_apply_category([slug_a, slug_b], cat_id, "add") == 2
+    session.expire_all()
+    loaded = await crud.get_by_slug(slug_a)
+    assert [c.id for c in loaded.categories] == [cat_id]
+
+    # 幂等再加：不产生重复关联
+    await crud.batch_apply_category([slug_a], cat_id, "add")
+    session.expire_all()
+    loaded = await crud.get_by_slug(slug_a)
+    assert [c.id for c in loaded.categories] == [cat_id]
+
+    assert await crud.batch_apply_category([slug_a, slug_b], cat_id, "remove") == 2
+    session.expire_all()
+    loaded = await crud.get_by_slug(slug_a)
+    assert loaded.categories == []
+
+    # 不在分类中再移除：幂等计数
+    assert await crud.batch_apply_category([slug_a], cat_id, "remove") == 1
+
+
+async def test_batch_apply_category_validation(session, default_user):
+    """未知 slug / 一级分类 → ValueError，且不产生部分变更"""
+    cat_crud = CategoryCrud(session)
+    top = await cat_crud.create(name="一级批量", parent_id=0, sort=0)
+    cat = await _level2_cat(cat_crud, "校验父", "校验子")
+    crud = ArticleCrud(session)
+    a = await crud.create(
+        title="T", content=None, cover_img_slug=None,
+        is_recommended=False, user_id=default_user.id, category_ids=[],
+    )
+    slug_a = a.slug
+
+    with pytest.raises(ValueError):
+        await crud.batch_apply_category([slug_a, "no-such-slug"], cat.id, "add")
+    with pytest.raises(ValueError):
+        await crud.batch_apply_category([slug_a], top.id, "add")
+
+    session.expire_all()
+    loaded = await crud.get_by_slug(slug_a)
+    assert loaded.categories == []
+
+
 async def test_list_paginated_splits_by_is_deleted(session, default_user):
     """is_deleted=False 只返回未删除文章；True 只返回回收站文章"""
     crud = ArticleCrud(session)

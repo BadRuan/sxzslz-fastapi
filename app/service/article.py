@@ -2,7 +2,15 @@ from typing import Optional
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.settings import settings
 from app.dao import ArticleCrud
-from app.schema import ArticleCreate, ArticleUpdate, ArticleOut, ArticleDetailOut, PageResponse
+from app.schema import (
+    ArticleBatchCategoryIn,
+    ArticleBatchCategoryOut,
+    ArticleCreate,
+    ArticleUpdate,
+    ArticleOut,
+    ArticleDetailOut,
+    PageResponse,
+)
 
 
 class ArticleService:
@@ -71,6 +79,13 @@ class ArticleService:
 
     async def delete(self, slug: str) -> bool:
         return await self.crud.soft_delete(slug)
+
+    async def batch_category(self, data: ArticleBatchCategoryIn) -> ArticleBatchCategoryOut:
+        """批量加入/移出分类；分类无效或文章不存在抛 ValueError（→400）"""
+        affected = await self.crud.batch_apply_category(
+            data.slugs, data.category_id, data.mode
+        )
+        return ArticleBatchCategoryOut(affected=affected)
 
     async def restore(self, slug: str) -> Optional[ArticleDetailOut]:
         """恢复回收站文章；不存在返回 None"""
