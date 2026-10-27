@@ -2,14 +2,16 @@ from os import path, remove
 from pathlib import Path
 from typing import Optional
 
+from fastapi import UploadFile
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.dao import DocumentCrud
+from app.errors import ServiceError
 from app.model import Document
 from app.model.document import generate_slug
 from app.schema import DocumentOut, DocumentSort, PageResponse, page_response
-from app.settings import upload_dir
-from app.utils import ensure_dirs, write_bytes_async
+from app.settings import settings, upload_dir
+from app.utils import FileTooLargeError, ensure_dirs, write_upload_stream
 
 
 class DocumentService:
@@ -30,24 +32,45 @@ class DocumentService:
         )
 
     async def add(
-        self, filename: str, mime_type: str, content: bytes, user_id: int
+        self, filename: str, mime_type: str, file: UploadFile, user_id: int
     ) -> Optional[Document]:
         suffix = Path(filename).suffix
         slugname = generate_slug() + suffix
         # 只在真正落盘时确保目录存在（exist_ok，避免每个请求都建目录）
         ensure_dirs((upload_dir.document,))
-        await write_bytes_async(path.join(upload_dir.document, slugname), content)
+        try:
+            size = await write_upload_stream(
+                path.join(upload_dir.document, slugname),
+                file,
+                max_bytes=settings.MAX_DOCUMENT_SIZE_MB * 1024 * 1024,
+            )
+        except FileTooLargeError:
+            raise ServiceError(
+                f"文件大小超过限制（最大 {settings.MAX_DOCUMENT_SIZE_MB}MB）"
+            )
+        if size == 0:
+            remove(path.join(upload_dir.document, slugname))
+            raise ServiceError("文件内容为空")
 
         await self.crud.add(
             raw_filename=filename,
             slug=slugname,
             mime_type=mime_type,
-            size=len(content),
+            size=size,
             user_id=user_id,
         )
         return await self.crud.get_by_slug(slugname)
 
-    async def remove_by_slug(self, slugname: str) -> bool:
+    async def find_by_slug(self, slugname: str) -> Optional[Document]:
+        """只读查询，不自增 view（权限校验 / 改名前定位用）"""
+        return await self.crud.get_by_slug(slugname)
+
+    async def rename(self, slugname: str, raw_filename: str) -> Optional[Document]:
+        """改展示名；记录不存在返回 None"""
+        return await self.crud.update_raw_filename(slugname, raw_filename)
+
+    async def remove(self, slugname: str) -> bool:
+        """删除 DB 记录并清理磁盘文件；记录不存在返回 False"""
         result = await self.crud.remove_by_slug(slugname)
         if result:
             file_path = path.join(upload_dir.document, slugname)

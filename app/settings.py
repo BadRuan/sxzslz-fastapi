@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     # 逗号分隔的允许来源，如 "http://localhost:3000,https://example.com"
     CORS_ORIGINS: str = "*"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 12
+    # 上传大小上限（MB）：图片 / 文档，超出返回 400
+    MAX_IMAGE_SIZE_MB: int = 10
+    MAX_DOCUMENT_SIZE_MB: int = 50
 
     model_config = SettingsConfigDict(
         env_file=".env",

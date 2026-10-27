@@ -27,7 +27,9 @@ async def create_article(
     current_user: User = Depends(get_current_user),
 ):
     # 业务校验失败（ServiceError）由全局 handler 统一转 400
-    return await ArticleService(session).create(data, user_id=current_user.id)
+    # data.user_id 显式指定发布主体；未传则归属当前登录用户
+    author_id = data.user_id if data.user_id is not None else current_user.id
+    return await ArticleService(session).create(data, user_id=author_id)
 
 
 @router.post("/batch-category", response_model=ArticleBatchCategoryOut)

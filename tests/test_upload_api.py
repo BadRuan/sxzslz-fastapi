@@ -42,7 +42,11 @@ async def test_upload_image_with_auth(client, auth_headers, tmp_path, monkeypatc
         headers=auth_headers,
     )
     assert resp.status_code == 200
-    assert resp.json()["slug"].endswith(".png")
+    body = resp.json()
+    assert body["slug"].endswith(".png")
+    assert body["size_bytes"] > 0
+    assert body["url"] == f"/image/{body['slug']}"
+    assert body["raw_url"] == f"/image/{body['slug']}?file_type=raw"
 
 
 async def test_upload_document_with_auth(client, auth_headers, tmp_path, monkeypatch):
@@ -60,7 +64,11 @@ async def test_upload_document_with_auth(client, auth_headers, tmp_path, monkeyp
         headers=auth_headers,
     )
     assert resp.status_code == 200
-    assert resp.json()["filename"] == "t.txt"
+    body = resp.json()
+    assert body["filename"] == "t.txt"
+    assert body["size_bytes"] == 5
+    assert body["url"] == f"/document/{body['slug']}"
+    assert body["raw_url"] is None
 
 
 async def test_upload_records_uploader(client, session, default_user, auth_headers, tmp_path, monkeypatch):
@@ -96,3 +104,208 @@ async def test_upload_records_uploader(client, session, default_user, auth_heade
     doc_list = (await client.get("/document/")).json()["data"][0]
     assert doc_list["user_id"] == default_user.id
     assert doc_list["user"]["id"] == default_user.id
+
+
+async def test_upload_document_too_large(client, auth_headers, tmp_path, monkeypatch):
+    """超过 MAX_DOCUMENT_SIZE_MB → 400，半成品文件已清理"""
+    from app.service import document as document_service_module
+    from app.settings import settings
+
+    doc_dir = tmp_path / "doc"
+    monkeypatch.setattr(settings, "MAX_DOCUMENT_SIZE_MB", 0)  # 0MB → 任何非空文件超限
+    monkeypatch.setattr(
+        document_service_module,
+        "upload_dir",
+        UploadDir(image_raw=str(tmp_path / "r"), image_preview=str(tmp_path / "p"), document=str(doc_dir)),
+    )
+    resp = await client.post(
+        "/document/",
+        files={"file": ("big.txt", b"hello", "text/plain")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+    assert "超过限制" in resp.json()["detail"]
+    # 无半成品落盘、无脏数据入库
+    assert (await client.get("/document/")).json()["total"] == 0
+    if doc_dir.exists():
+        assert list(doc_dir.iterdir()) == []
+
+
+async def test_upload_empty_file_rejected(client, auth_headers, tmp_path, monkeypatch):
+    """空文件 → 400"""
+    from app.service import document as document_service_module
+
+    doc_dir = tmp_path / "doc"
+    monkeypatch.setattr(
+        document_service_module,
+        "upload_dir",
+        UploadDir(image_raw=str(tmp_path / "r"), image_preview=str(tmp_path / "p"), document=str(doc_dir)),
+    )
+    resp = await client.post(
+        "/document/",
+        files={"file": ("empty.txt", b"", "text/plain")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "文件内容为空"
+
+
+def _stub_doc_upload_dir(tmp_path, monkeypatch):
+    from app.service import document as document_service_module
+
+    doc_dir = tmp_path / "doc"
+    stub = UploadDir(
+        image_raw=str(tmp_path / "r"),
+        image_preview=str(tmp_path / "p"),
+        document=str(doc_dir),
+    )
+    monkeypatch.setattr(document_service_module, "upload_dir", stub)
+    return doc_dir
+
+
+async def _upload_doc(client, auth_headers, content=b"hello", name="t.txt"):
+    resp = await client.post(
+        "/document/",
+        files={"file": (name, content, "text/plain")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    return resp.json()
+
+
+async def test_delete_document_owner(client, auth_headers, tmp_path, monkeypatch):
+    """本人删除成功：204、列表消失、磁盘文件已清理"""
+    doc_dir = _stub_doc_upload_dir(tmp_path, monkeypatch)
+    body = await _upload_doc(client, auth_headers)
+    slug = body["slug"]
+    assert (doc_dir / slug).is_file()
+
+    resp = await client.delete(f"/document/{slug}", headers=auth_headers)
+    assert resp.status_code == 204
+    assert resp.content == b""
+    assert not (doc_dir / slug).exists()
+    assert (await client.get("/document/")).json()["total"] == 0
+    assert (await client.get(f"/document/{slug}")).status_code == 404
+
+
+async def test_delete_document_requires_auth(client, auth_headers, tmp_path, monkeypatch):
+    _stub_doc_upload_dir(tmp_path, monkeypatch)
+    body = await _upload_doc(client, auth_headers)
+    resp = await client.delete(f"/document/{body['slug']}")
+    assert resp.status_code == 401
+
+
+async def test_delete_document_unknown_slug_404(client, auth_headers):
+    resp = await client.delete("/document/no-such.pdf", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+async def test_delete_document_forbidden_for_other_user(
+    client, session, default_user, auth_headers, tmp_path, monkeypatch
+):
+    """非上传者删除 → 403，记录与磁盘文件保留"""
+    from app.auth import create_access_token
+    from app.model import User
+
+    doc_dir = _stub_doc_upload_dir(tmp_path, monkeypatch)
+    body = await _upload_doc(client, auth_headers)
+    slug = body["slug"]
+
+    other = User.create_user(username="other", nickname="他人", password="test123")
+    session.add(other)
+    await session.flush()
+    other_headers = {"Authorization": f"Bearer {create_access_token(other.id)}"}
+
+    resp = await client.delete(f"/document/{slug}", headers=other_headers)
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "无权限操作该文件"
+    assert (doc_dir / slug).is_file()
+    assert (await client.get("/document/")).json()["total"] == 1
+    # 本人仍可删
+    assert (await client.delete(f"/document/{slug}", headers=auth_headers)).status_code == 204
+
+
+async def test_patch_document_rename_owner(client, auth_headers, tmp_path, monkeypatch):
+    """本人改名成功：raw_filename 更新，下载头文件名同步"""
+    from app.routers import document as document_router_module
+
+    doc_dir = _stub_doc_upload_dir(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        document_router_module,
+        "upload_dir",
+        UploadDir(
+            image_raw=str(tmp_path / "r"),
+            image_preview=str(tmp_path / "p"),
+            document=str(doc_dir),
+        ),
+    )
+    body = await _upload_doc(client, auth_headers)
+    slug = body["slug"]
+
+    resp = await client.patch(
+        f"/document/{slug}",
+        json={"raw_filename": "新报告名.txt"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["raw_filename"] == "新报告名.txt"
+    assert data["slug"] == slug  # slug 不变
+
+    # 列表同步
+    listed = (await client.get("/document/")).json()["data"][0]
+    assert listed["raw_filename"] == "新报告名.txt"
+
+    # 下载 Content-Disposition 使用新文件名（非 ASCII 走 RFC 5987 filename*）
+    download = await client.get(f"/document/{slug}")
+    assert download.status_code == 200
+    disposition = download.headers.get("content-disposition", "")
+    assert "attachment" in disposition
+    assert "filename*=utf-8''" in disposition
+    from urllib.parse import unquote
+
+    encoded = disposition.split("filename*=utf-8''", 1)[1]
+    assert unquote(encoded) == "新报告名.txt"
+
+
+async def test_patch_document_forbidden_and_errors(
+    client, session, auth_headers, tmp_path, monkeypatch
+):
+    """401 未登录；403 非本人；404 不存在；422 空文件名"""
+    from app.auth import create_access_token
+    from app.model import User
+
+    _stub_doc_upload_dir(tmp_path, monkeypatch)
+    body = await _upload_doc(client, auth_headers)
+    slug = body["slug"]
+
+    assert (
+        await client.patch(f"/document/{slug}", json={"raw_filename": "x.txt"})
+    ).status_code == 401
+    assert (
+        await client.patch(
+            f"/document/{slug}", json={"raw_filename": "x.txt"}, headers=auth_headers
+        )
+    ).status_code == 200
+
+    other = User.create_user(username="other2", nickname="他人2", password="test123")
+    session.add(other)
+    await session.flush()
+    other_headers = {"Authorization": f"Bearer {create_access_token(other.id)}"}
+    forbidden = await client.patch(
+        f"/document/{slug}", json={"raw_filename": "hack.txt"}, headers=other_headers
+    )
+    assert forbidden.status_code == 403
+
+    assert (
+        await client.patch(
+            "/document/no-such.pdf",
+            json={"raw_filename": "x.txt"},
+            headers=auth_headers,
+        )
+    ).status_code == 404
+    assert (
+        await client.patch(
+            f"/document/{slug}", json={"raw_filename": ""}, headers=auth_headers
+        )
+    ).status_code == 422

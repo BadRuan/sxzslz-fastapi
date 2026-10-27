@@ -16,7 +16,7 @@
 | 时间字段 | `create_at` / `uploaded_at` 为 ISO 8601 **本地时间、无时区后缀**（如 `2026-09-24T11:22:01.682832`），按服务器时区理解（Docker 镜像固定 `Asia/Shanghai`） |
 | 分页 | 所有列表接口返回统一 `PageResponse`；`page` 超出范围时 `data` 为空数组，不报错 |
 | 跨域 | 浏览器联调时前端源必须包含在服务端 `CORS_ORIGINS`（逗号分隔），否则被 CORS 拦截 |
-| 上传大小 | 服务端当前**未强制限制**上传体积，建议前端自行限制（图片建议 ≤ 10MB） |
+| 上传大小 | 服务端强制限制：图片默认 **10MB**（`MAX_IMAGE_SIZE_MB`）、文档默认 **50MB**（`MAX_DOCUMENT_SIZE_MB`），超出返回 `400`；空文件返回 `400 文件内容为空` |
 | 鉴权方式 | 读接口（`GET`）公开；写操作（`POST` / `PATCH` / `DELETE`）需 `Authorization: Bearer <token>`，见[鉴权](#鉴权) |
 
 ## 技术栈
@@ -48,11 +48,14 @@ SECRET_KEY=your-secret-key-change-in-production
 DEFAULT_USER_ID=1
 CORS_ORIGINS=http://localhost:3000
 ACCESS_TOKEN_EXPIRE_MINUTES=720
+MAX_IMAGE_SIZE_MB=10
+MAX_DOCUMENT_SIZE_MB=50
 ```
 
 > `DEFAULT_USER_ID` 为创建文章时的默认作者 ID，需对应数据库中已存在的用户。
 > `CORS_ORIGINS` 为逗号分隔的允许来源。
 > `SECRET_KEY` 用于 JWT 签名，生产环境务必更换。
+> `MAX_IMAGE_SIZE_MB` / `MAX_DOCUMENT_SIZE_MB` 为上传大小上限（MB），超出返回 `400`。
 
 ### 安装并启动
 
@@ -238,6 +241,8 @@ Content-Type: application/json
 | GET | `/image/{slug}` | ✗ | 获取图片（默认预览图） | 二进制流 |
 | GET | `/document/` | ✗ | 文件分页列表 | `PageResponse[DocumentOut]` |
 | POST | `/document/` | ✓ | 上传文件 | `UploadResult` |
+| PATCH | `/document/{slug}` | ✓ | 改文件展示名（仅上传者） | `DocumentOut` |
+| DELETE | `/document/{slug}` | ✓ | 删除文件（仅上传者，清磁盘） | 204 空 |
 | GET | `/document/{slug}` | ✗ | 下载文件 | 二进制流 |
 
 > 响应模型与[数据模型](#数据模型)章节一一对应；标 ✓ 的接口需携带 `Authorization: Bearer <token>`。
@@ -447,8 +452,9 @@ Content-Type: application/json
 | cover_img_slug | string | ✗ | null | 封面图 slug（来自图片上传接口的返回） |
 | is_recommended | bool | ✗ | false | 是否推荐 |
 | category_ids | int[] | ✗ | [] | 关联**二级分类** ID 列表（可多个；一级分类或不存在的 id 返回 400） |
+| user_id | int | ✗ | 当前登录用户 | **发布主体**（文章归属用户 id）；≥1，非法值 422。不传则归属 JWT 当前用户 |
 
-> 作者为当前登录用户（取自 JWT），前端无需传；`DEFAULT_USER_ID` 仅作为不走 API 直接调用 service 时的兜底默认。
+> 默认作者为当前登录用户（取自 JWT）；多账号/代发场景可传 `user_id` 指定发布主体。`DEFAULT_USER_ID` 仅作为不走 API 直接调用 service 时的兜底默认。
 
 **响应** `201`：`ArticleDetailOut`（含 `content`）
 
@@ -576,6 +582,8 @@ file: <二进制图片>
 
 - 服务端按该 part 的 `Content-Type` 做白名单校验；浏览器上传时请确保 `File.type` 非空（如 `.png` → `image/png`），为空会返回 `400`。
 - 返回的 `slug` **保留原始扩展名**（如 `5894e8c2bc824d0abd7ed539115cb6b9.png`），可直接用于文章的 `cover_img_slug`。
+- 默认大小上限 **10MB**（`MAX_IMAGE_SIZE_MB`），超出或空文件返回 `400`。
+- 前端上传进度用 `XMLHttpRequest` 的 `upload.onprogress`（`fetch` 无法直接拿上传进度），详见 `docs/frontend-api.md`。
 
 **响应** `200`：
 
@@ -583,11 +591,16 @@ file: <二进制图片>
 {
   "filename": "photo.png",
   "slug": "5894e8c2bc824d0abd7ed539115cb6b9.png",
-  "content_type": "image/png"
+  "content_type": "image/png",
+  "size_bytes": 102400,
+  "url": "/image/5894e8c2bc824d0abd7ed539115cb6b9.png",
+  "raw_url": "/image/5894e8c2bc824d0abd7ed539115cb6b9.png?file_type=raw"
 }
 ```
 
-**失败**：`400` 格式不支持或上传失败
+> `url` 为预览图相对地址，`raw_url` 为原图地址；前端拼 `BASE` 后可直接 `<img src>`。
+
+**失败**：`400` 格式不支持 / 超过大小限制 / 空文件 / 上传失败
 
 ### GET `/image/`
 
@@ -666,6 +679,8 @@ file: <二进制文件>
 
 - 与图片上传一致：按 part 的 `Content-Type` 白名单校验，浏览器端请确保 `File.type` 非空。
 - 返回的 `slug` 保留原始扩展名，可用于下载链接 `GET /document/{slug}`。
+- 默认大小上限 **50MB**（`MAX_DOCUMENT_SIZE_MB`），超出或空文件返回 `400`。
+- 上传进度与图片相同，用 `XMLHttpRequest` + `upload.onprogress`。
 
 **响应** `200`：
 
@@ -673,11 +688,16 @@ file: <二进制文件>
 {
   "filename": "报告.pdf",
   "slug": "a1b2c3d4e5f6g7h8.pdf",
-  "content_type": "application/pdf"
+  "content_type": "application/pdf",
+  "size_bytes": 8,
+  "url": "/document/a1b2c3d4e5f6g7h8.pdf",
+  "raw_url": null
 }
 ```
 
-**失败**：`400` 格式不支持或上传失败
+> `url` 为下载相对地址；`raw_url` 固定 `null`（文档无预览/原图之分）。
+
+**失败**：`400` 格式不支持 / 超过大小限制 / 空文件 / 上传失败
 
 ### GET `/document/`
 
@@ -726,7 +746,23 @@ file: <二进制文件>
 
 **失败**：`404` 文件记录不存在
 
-> 文件模块暂无删除接口。
+### PATCH `/document/{slug}`
+
+仅**上传者本人**可改展示名（下载时 `Content-Disposition` 的文件名）。不替换文件内容，`slug` 不变。**需携带 token**。
+
+**请求**：
+
+```json
+{"raw_filename": "2026年审计报告（修订）.pdf"}
+```
+
+**响应** `200`：`DocumentOut`。**失败**：`401` 未登录；`403 无权限操作该文件` 非上传者；`404` 不存在；`422` 名为空。
+
+### DELETE `/document/{slug}`
+
+仅**上传者本人**可删：DB 记录 + 磁盘文件一并清理（硬删，不可恢复）。**需携带 token**。
+
+**响应** `204` 空。**失败**：`401` 未登录；`403 无权限操作该文件` 非上传者；`404` 不存在。
 
 ---
 
@@ -790,11 +826,16 @@ file: <二进制文件>
 
 ### UploadResult
 
+上传接口（`POST /image/`、`POST /document/`）统一响应：
+
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | filename | string | 原始文件名 |
 | slug | string | 文件标识（含原始扩展名），用于后续 GET / 文章封面 |
 | content_type | string | 上传时的 MIME 类型 |
+| size_bytes | int | 落盘字节数 |
+| url | string | 相对访问地址：图片=预览图，文件=下载地址（前端拼 `BASE`） |
+| raw_url | string \| null | 仅图片有值（原图 `?file_type=raw`）；文档为 `null` |
 
 ### ImageOut / DocumentOut
 

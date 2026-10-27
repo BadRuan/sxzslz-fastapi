@@ -46,6 +46,8 @@ class ArticleCreate(BaseModel):
     cover_img_slug: str | None = None
     is_recommended: bool = False
     category_ids: list[int] = []
+    # 指定发布主体（文章归属用户）；不传则取当前登录用户
+    user_id: int | None = Field(default=None, ge=1)
 
 
 class ArticleLikeOut(BaseModel):

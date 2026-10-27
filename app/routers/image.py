@@ -42,20 +42,24 @@ async def upload_image(
         )
 
     filename = file.filename or "default_name"
-    content = await file.read()
     service = ImageService(session)
+    # ServiceError（超限/空文件）由全局 handler 转 400
     image = await service.add(
         filename=filename,
         mime_type=str(file.content_type),
-        content=content,
+        file=file,
         user_id=current_user.id,
     )
     if image is None:
         raise HTTPException(status_code=400, detail="上传失败")
+    slug = image.slug
     return UploadResult(
-        filename=file.filename or filename,
-        slug=image.slug,
-        content_type=str(file.content_type),
+        filename=image.raw_filename,
+        slug=slug,
+        content_type=image.mime_type,
+        size_bytes=image.size_bytes,
+        url=f"/image/{slug}",
+        raw_url=f"/image/{slug}?file_type=raw",
     )
 
 

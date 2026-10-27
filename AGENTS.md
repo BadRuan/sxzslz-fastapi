@@ -31,8 +31,9 @@ uv run pytest tests/test_article_api.py::test_name   # 单测
 - 文章只有一个可见性字段 `is_deleted`（无 `is_hidden`）：`DELETE` 软删除进回收站，列表默认过滤已删文章，后台用 `GET /articles/?is_deleted=true` 枚举回收站、`POST /articles/{slug}/restore` 恢复（需登录，幂等）。分类**硬删除**，删一级分类会**级联删除子分类**并清理 `article_category` 关联（业务层外键，无数据库外键）。
 - 批量分类：`POST /articles/batch-category`（需登录）`{slugs[], category_id, mode: add|remove}`，只作用于未删除文章，幂等；任一 slug 不存在/无效分类 → 400 整批不生效（直接操作 `article_category` 关联表）。
 - `view_count` 在公开详情 `GET /articles/{slug}` 成功访问时原子 +1（已删文章 404 且不计数）；`like_count` 走 `POST /articles/{slug}/like`。图片/文件**上传**需登录（读接口公开），`user_id` 取当前登录用户（业务层关联，无 DB 外键；**必填无默认**，存量迁移已用 `scripts/migrate_add_user_id.py` 对部署库执行——加列、存量置 1、SET NOT NULL，脚本幂等，其他环境跑同一脚本）。
-- 文章作者取当前登录用户（`POST /articles/` 从 JWT 解析）；`settings.DEFAULT_USER_ID` 仅作 service 层不传 `user_id` 时的兜底。`GET /articles/` 支持 `user_id` 过滤（后台展示登录账户文章）。
-- 上传落盘 `./uploads/`（`app/settings.py` 的 `upload_dir`）。
+- 文章作者默认取当前登录用户（`POST /articles/` 从 JWT 解析）；body 可选传 `user_id`（≥1）指定发布主体。`settings.DEFAULT_USER_ID` 仅作 service 层不传 `user_id` 时的兜底。`GET /articles/` 支持 `user_id` 过滤（后台展示登录账户文章）。
+- 上传落盘 `./uploads/`（`app/settings.py` 的 `upload_dir`）。上传为**分块流式落盘**（`write_upload_stream`，1MB/块，避免整文件进内存）；大小上限 `settings.MAX_IMAGE_SIZE_MB`（默认 10）/ `MAX_DOCUMENT_SIZE_MB`（默认 50），超限或空文件 → ServiceError 400 并清理半成品。`UploadResult` 含 `size_bytes` / `url`（图片=预览、文档=下载）/ `raw_url`（仅图片）。
+- 文档管理：`PATCH /document/{slug}` 仅上传者可改展示名 `raw_filename`（slug/内容不变）；`DELETE /document/{slug}` 仅上传者可删（DB + 磁盘文件一并清理，硬删不可恢复）。非本人 → 403 `无权限操作该文件`，不存在 → 404。图片暂无删除/更新接口。
 - 业务校验错误：dao/service 抛 `ServiceError`（`ValueError` 子类，`app/errors.py`）→ 全局 handler 转 400 `{"detail": "..."}`（路由层不 try/except）；资源不存在 → 404；参数格式非法 → 422。
 - ArticleUpdate 的 null 语义：可空字段显式 `null` 表示清空；非空字段传 `null` 返回 400。
 
@@ -63,7 +64,7 @@ JWT Bearer（`pyjwt`，HS256，密钥 `settings.SECRET_KEY`）。
 
 ## 环境变量
 
-`.env`（已 gitignore）：`DATABASE_URL`、`DB_ECHO`、`DEBUG`、`SECRET_KEY`、`DEFAULT_USER_ID`、`CORS_ORIGINS`（逗号分隔）、`ACCESS_TOKEN_EXPIRE_MINUTES`。README 有模板。
+`.env`（已 gitignore）：`DATABASE_URL`、`DB_ECHO`、`DEBUG`、`SECRET_KEY`、`DEFAULT_USER_ID`、`CORS_ORIGINS`（逗号分隔）、`ACCESS_TOKEN_EXPIRE_MINUTES`、`MAX_IMAGE_SIZE_MB`、`MAX_DOCUMENT_SIZE_MB`。README 有模板。
 
 ## 部署
 

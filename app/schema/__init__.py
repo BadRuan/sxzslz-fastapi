@@ -20,7 +20,13 @@ from app.schema.category import (
     CategoryUpdate,
 )
 from app.schema.common import PageResponse, page_response
-from app.schema.file import DocumentOut, DocumentSort, ImageOut, UploadResult
+from app.schema.file import (
+    DocumentOut,
+    DocumentSort,
+    DocumentUpdate,
+    ImageOut,
+    UploadResult,
+)
 from app.schema.user import BaseInfoOut, UserOut
 
 __all__ = [
@@ -38,6 +44,7 @@ __all__ = [
     "CategoryUpdate",
     "DocumentOut",
     "DocumentSort",
+    "DocumentUpdate",
     "ImageOut",
     "LoginRequest",
     "PageResponse",

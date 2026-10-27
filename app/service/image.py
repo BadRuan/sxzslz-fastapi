@@ -2,14 +2,21 @@ from os import path, remove
 from pathlib import Path
 from typing import Optional
 
+from fastapi import UploadFile
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.dao import ImageCrud
+from app.errors import ServiceError
 from app.model import Image
 from app.model.image import generate_slug
 from app.schema import PageResponse, ImageOut, page_response
-from app.settings import upload_dir
-from app.utils import ensure_dirs, generate_webp_images, write_bytes_async
+from app.settings import settings, upload_dir
+from app.utils import (
+    FileTooLargeError,
+    ensure_dirs,
+    generate_webp_images,
+    write_upload_stream,
+)
 
 
 class ImageService:
@@ -23,13 +30,23 @@ class ImageService:
         )
 
     async def add(
-        self, filename: str, mime_type: str, content: bytes, user_id: int
+        self, filename: str, mime_type: str, file: UploadFile, user_id: int
     ) -> Optional[Image]:
         suffix = Path(filename).suffix
         slugname = generate_slug() + suffix
         # 只在真正落盘时确保目录存在（exist_ok，避免每个请求都建目录）
         ensure_dirs((upload_dir.image_raw, upload_dir.image_preview))
-        await write_bytes_async(path.join(upload_dir.image_raw, slugname), content)
+        raw_path = path.join(upload_dir.image_raw, slugname)
+        try:
+            size = await write_upload_stream(
+                raw_path, file, max_bytes=settings.MAX_IMAGE_SIZE_MB * 1024 * 1024
+            )
+        except FileTooLargeError:
+            raise ServiceError(f"图片大小超过限制（最大 {settings.MAX_IMAGE_SIZE_MB}MB）")
+        if size == 0:
+            remove(raw_path)
+            raise ServiceError("文件内容为空")
+
         # 生成预览图和缩略图（PIL 在线程池执行）
         await generate_webp_images(slugname)
 
@@ -37,7 +54,7 @@ class ImageService:
             raw_filename=filename,
             slug=slugname,
             mime_type=mime_type,
-            size=len(content),
+            size=size,
             user_id=user_id,
         )
         return await self.crud.get_by_slug(slugname)

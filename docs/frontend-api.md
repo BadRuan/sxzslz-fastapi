@@ -38,7 +38,7 @@
 ### 鉴权总览
 
 - **读接口（GET）全部公开**，无需 token。
-- **写操作需登录**：分类/文章的 `POST` / `PATCH` / `DELETE`、图片/文件的 `POST` 上传、修改密码。
+- **写操作需登录**：分类/文章的 `POST` / `PATCH` / `DELETE`、图片/文件的 `POST` 上传、文件的 `PATCH` / `DELETE`、修改密码。
 - 匿名例外：`POST /articles/{slug}/like`（点赞）无需 token。
 
 ---
@@ -214,6 +214,10 @@ function showError(res) {
 | `文章不存在或已删除: xxx` | 批量分类时 slug 不存在（整批不生效） |
 | `仅支持 JPG, PNG, GIF, WebP 格式的图片` | 图片 `Content-Type` 不在白名单 |
 | `仅支持txt、pdf、doc、docx、xls、xlsx、ppt、pptx、zip格式的文件` | 文件 `Content-Type` 不在白名单 |
+| `图片大小超过限制（最大 10MB）` | 图片超过 `MAX_IMAGE_SIZE_MB` |
+| `文件大小超过限制（最大 50MB）` | 文档超过 `MAX_DOCUMENT_SIZE_MB` |
+| `文件内容为空` | 上传 0 字节文件 |
+| `无权限操作该文件` | PATCH / DELETE 非上传者本人（403） |
 
 ### 404 的 detail 取值
 
@@ -426,7 +430,8 @@ function showError(res) {
   "content": "正文内容……",
   "cover_img_slug": "0bee5133169c4e888c147aba8864fa14.png",
   "is_recommended": true,
-  "category_ids": [2]
+  "category_ids": [2],
+  "user_id": 1
 }
 ```
 
@@ -437,8 +442,9 @@ function showError(res) {
 | cover_img_slug | string | ✗ | null | 封面图 slug（来自 `POST /image/` 返回） |
 | is_recommended | bool | ✗ | false | 是否推荐 |
 | category_ids | int[] | ✗ | [] | **二级分类** id 列表；含一级分类或不存在的 id → 400 |
+| user_id | int | ✗ | 当前登录用户 | **发布主体**（文章归属用户 id，来自 `/base/` 用户列表）；≥1，非法值 422。不传则归属 JWT 当前用户 |
 
-> 作者自动取当前登录用户（JWT），前端**无需传 user_id**。
+> 代发/多账号场景：登录任意有权限的账号后，传 `user_id` 指定文章归属；响应里的 `user` 即该主体。
 
 **成功** `201`：`ArticleDetailOut`（比列表多 `content` 字段，结构见 [10. 通用数据结构](#10-通用数据结构)）。
 
@@ -567,15 +573,37 @@ const list = await get("/articles/");
 
 上传图片，`multipart/form-data`，字段名 `file`。支持 JPG / PNG / GIF / WebP。服务端自动生成 WebP 预览图（透明背景保留）。
 
+**大小限制**：默认 **10MB**（服务端环境变量 `MAX_IMAGE_SIZE_MB` 可调）。超出 → `400 图片大小超过限制（最大 10MB）`；空文件 → `400 文件内容为空`。
+
+**上传进度（前端）**：进度条用 `XMLHttpRequest` 的 `upload.onprogress`（`fetch` 无法直接拿上传进度）：
+
 ```js
-const form = new FormData();
-form.append("file", file); // <input type="file"> 的 File 对象
-const res = await fetch(`${BASE}/image/`, {
-  method: "POST",
-  headers: { Authorization: `Bearer ${token}` },
-  body: form,
-  // 不要手动设置 Content-Type，浏览器会自动带 boundary
+function uploadWithProgress(url, file, token, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    // 不要手动设置 Content-Type，浏览器自动带 boundary
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded / e.total); // 0~1
+    };
+    xhr.onload = () => {
+      const body = JSON.parse(xhr.responseText);
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body);
+      else reject(new Error(typeof body.detail === "string" ? body.detail : "上传失败"));
+    };
+    xhr.onerror = () => reject(new Error("网络错误"));
+    const form = new FormData();
+    form.append("file", file); // <input type="file"> 的 File 对象
+    xhr.send(form);
+  });
+}
+
+// 用法
+const result = await uploadWithProgress(`${BASE}/image/`, file, token, (p) => {
+  el.value = p; // <progress> 或自绘进度条
 });
+// result.url / result.raw_url 可直接拼 <img src>
 ```
 
 > 浏览器上传时确保 `File.type` 非空（如 `.png` → `image/png`），为空会返回 `400`。
@@ -586,13 +614,25 @@ const res = await fetch(`${BASE}/image/`, {
 {
   "filename": "photo.png",
   "slug": "0bee5133169c4e888c147aba8864fa14.png",
-  "content_type": "image/png"
+  "content_type": "image/png",
+  "size_bytes": 79,
+  "url": "/image/0bee5133169c4e888c147aba8864fa14.png",
+  "raw_url": "/image/0bee5133169c4e888c147aba8864fa14.png?file_type=raw"
 }
 ```
 
+| 字段 | 说明 |
+|------|------|
+| filename | 原始文件名 |
+| slug | 文件标识（含扩展名），可用于 `cover_img_slug` |
+| content_type | 上传时的 MIME |
+| size_bytes | 落盘字节数 |
+| url | **预览图**相对地址（拼 BASE 后可直接 `<img src>`） |
+| raw_url | **原图**相对地址（`?file_type=raw`） |
+
 > `slug` **保留原始扩展名**，可直接用于文章 `cover_img_slug` 与 `<img src>`。
 
-**失败**：`400` 格式不支持或上传失败；`401` 未登录。
+**失败**：`400` 格式不支持 / 超过大小限制 / 空文件 / 上传失败；`401` 未登录。
 
 ### GET `/image/`
 
@@ -655,17 +695,33 @@ const res = await fetch(`${BASE}/image/`, {
 
 上传文档，字段名 `file`。支持 txt / pdf / doc / docx / xls / xlsx / ppt / pptx / zip（按 `Content-Type` 白名单校验）。
 
+**大小限制**：默认 **50MB**（服务端环境变量 `MAX_DOCUMENT_SIZE_MB` 可调）。超出 → `400 文件大小超过限制（最大 50MB）`；空文件 → `400 文件内容为空`。
+
+**上传进度**：与图片相同，用 `XMLHttpRequest` + `upload.onprogress`（完整封装见 [8. 图片模块](#8-图片模块-image) 的 `uploadWithProgress` 示例，换 URL 即可）。
+
 **成功** `200`：
 
 ```json
 {
   "filename": "报告.pdf",
   "slug": "ed9134a751e34f0fa50e5f879b92c647.pdf",
-  "content_type": "application/pdf"
+  "content_type": "application/pdf",
+  "size_bytes": 8,
+  "url": "/document/ed9134a751e34f0fa50e5f879b92c647.pdf",
+  "raw_url": null
 }
 ```
 
-**失败**：`400` 格式不支持；`401` 未登录。
+| 字段 | 说明 |
+|------|------|
+| filename | 原始文件名 |
+| slug | 文件标识（含扩展名） |
+| content_type | 上传时的 MIME |
+| size_bytes | 落盘字节数 |
+| url | **下载**相对地址（拼 BASE 后 `window.open` 或 fetch 转 blob） |
+| raw_url | 固定 `null`（文档无预览/原图之分） |
+
+**失败**：`400` 格式不支持 / 超过大小限制 / 空文件；`401` 未登录。
 
 ### GET `/document/`
 
@@ -723,7 +779,57 @@ window.open(`${BASE}/document/${slug}`);
 
 **失败**：`404 Document not found`。
 
-> 文件模块暂无删除接口。
+### PATCH `/document/{slug}`（需登录）
+
+仅**上传者本人**可改文档展示名（下载时 `Content-Disposition` 的文件名）。**不替换文件内容**，`slug` / `size_bytes` / `uploaded_at` 不变。
+
+**请求体**：
+
+```json
+{"raw_filename": "2026年审计报告（修订）.pdf"}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| raw_filename | string | ✓ | 新展示名，1~255 字符，空串 422 |
+
+**成功** `200`：`DocumentOut`（`raw_filename` 已更新）。
+
+**失败**：
+
+| 状态码 | detail | 场景 |
+|--------|--------|------|
+| 401 | `未提供认证凭据` 等 | 未登录 / token 无效 |
+| 403 | `无权限操作该文件` | 已登录但不是上传者 |
+| 404 | `Document not found` | slug 不存在 |
+| 422 | detail 数组 | `raw_filename` 为空或超长 |
+
+### DELETE `/document/{slug}`（需登录）
+
+仅**上传者本人**可删：同时清理 **DB 记录与磁盘文件**，不可恢复。删除后 `GET /document/{slug}` 与列表均不再返回。
+
+**成功** `204` 空 body。
+
+**失败**：
+
+| 状态码 | detail | 场景 |
+|--------|--------|------|
+| 401 | `未提供认证凭据` 等 | 未登录 / token 无效 |
+| 403 | `无权限操作该文件` | 已登录但不是上传者 |
+| 404 | `Document not found` | slug 不存在（已删再删也是 404） |
+
+```js
+// 前端删除示例
+async function deleteDocument(slug) {
+  const res = await fetch(`${BASE}/document/${slug}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (res.status === 204) return true;
+  // 403 → 提示无权限；404 → 已被删除，刷新列表即可
+  throw new Error(await parseDetail(res));
+}
+```
 
 ---
 
@@ -778,11 +884,16 @@ window.open(`${BASE}/document/${slug}`);
 
 ### UploadResult
 
+上传接口（`POST /image/`、`POST /document/`）统一响应：
+
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | filename | string | 原始文件名 |
 | slug | string | 文件标识（含扩展名） |
 | content_type | string | 上传时的 MIME |
+| size_bytes | int | 落盘字节数 |
+| url | string | 相对访问地址：图片=预览图，文件=下载地址（前端拼 `BASE`） |
+| raw_url | string \| null | 仅图片有值（原图 `?file_type=raw`）；文档为 `null` |
 
 ### ImageOut / DocumentOut（结构一致）
 
@@ -817,6 +928,12 @@ window.open(`${BASE}/document/${slug}`);
 
 **Q：上传图片返回 400「仅支持 JPG, PNG, GIF, WebP 格式的图片」？**
 检查文件 part 的 `Content-Type`。某些场景（如手动拼 multipart、旧浏览器）`File.type` 为空，会被判为非法。前端务必用 `FormData.append("file", fileObj)` 让浏览器自动填类型。
+
+**Q：上传进度条一直不动 / 拿不到进度？**
+`fetch` 无法读取上传字节进度，必须用 `XMLHttpRequest` 的 `upload.onprogress`（见 [8. 图片模块](#8-图片模块-image) 的 `uploadWithProgress`）。注意进度只反映**客户端已发送**字节；服务端还要做落盘/生成预览图，发送到 100% 后需等待响应返回才算完成。
+
+**Q：上传大文件报 400「文件大小超过限制」？**
+图片默认上限 10MB、文档 50MB（服务端 `MAX_IMAGE_SIZE_MB` / `MAX_DOCUMENT_SIZE_MB` 可调）。前端应在选择文件时先用 `file.size` 预检，给出友好提示，避免白传。
 
 **Q：浏览器控制台报 CORS 错误？**
 前端源（如 `http://localhost:5173`）必须加入服务端 `.env` 的 `CORS_ORIGINS`（逗号分隔多个），改完需重启服务。
@@ -854,18 +971,20 @@ localStorage.setItem("token", access_token);
 // 2. 拿分类树，选二级分类 id
 const { category } = await get("/base/");
 
-// 3. 上传封面图
+// 3. 上传封面图（需要进度条时改用 uploadWithProgress，见图片模块）
 const form = new FormData();
 form.append("file", coverFile);
-const { slug: coverSlug } = await postForm("/image/", form);
+const cover = await postForm("/image/", form);
+// cover.url 即预览图相对地址，cover.slug 用于文章封面
 
-// 4. 创建文章
+// 4. 创建文章（user_id 可选：不传归属当前登录用户，传则指定发布主体）
 const article = await post("/articles/", {
   title,
   content,
-  cover_img_slug: coverSlug,
+  cover_img_slug: cover.slug,
   is_recommended: false,
   category_ids: [二级分类id],
+  // user_id: 1,
 });
 
 // 5. 列表展示封面

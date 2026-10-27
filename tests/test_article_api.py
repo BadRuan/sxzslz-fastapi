@@ -90,6 +90,33 @@ async def test_create_article_owned_by_current_user(client, auth_headers):
     assert data["user"]["nickname"] == "管理员"
 
 
+async def test_create_article_with_explicit_user_id(client, session, auth_headers):
+    """body 传 user_id 指定发布主体；响应 user.id 与传入一致"""
+    from app.model import User
+
+    other = User.create_user(username="author2", nickname="作者二", password="test123")
+    session.add(other)
+    await session.flush()
+
+    resp = await client.post(
+        "/articles/",
+        json={"title": "代发文章", "user_id": other.id},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["user"]["id"] == other.id
+    assert data["user"]["nickname"] == "作者二"
+
+
+async def test_create_article_user_id_zero_rejected(client, auth_headers):
+    """user_id 必须 ≥1，非法值 422"""
+    resp = await client.post(
+        "/articles/", json={"title": "非法作者", "user_id": 0}, headers=auth_headers
+    )
+    assert resp.status_code == 422
+
+
 async def test_like_article_anonymous(client, session):
     """匿名点赞：公开接口，每次 +1，详情同步更新"""
     out = await _create(session, title="点赞文章")

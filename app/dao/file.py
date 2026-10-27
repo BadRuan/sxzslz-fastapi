@@ -74,6 +74,14 @@ class FileCrud(Generic[ModelT]):
         row = result.first()
         return int(row[0]) if row is not None else None
 
+    async def update_raw_filename(self, slugname: str, raw_filename: str) -> Optional[ModelT]:
+        record = await self.get_by_slug(slugname)
+        if record is None:
+            return None
+        record.raw_filename = raw_filename
+        await self.session.flush()
+        return record
+
     async def remove_by_slug(self, slugname: str) -> bool:
         record = await self.get_by_slug(slugname)
         if record is not None:

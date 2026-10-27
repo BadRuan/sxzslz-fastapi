@@ -1,17 +1,39 @@
 from os import path
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.responses import FileResponse
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.auth import get_current_user
 from app.database import get_session
 from app.model import User
-from app.schema import DocumentOut, DocumentSort, PageResponse, UploadResult
+from app.schema import (
+    DocumentOut,
+    DocumentSort,
+    DocumentUpdate,
+    PageResponse,
+    UploadResult,
+)
 from app.service import DocumentService
 from app.settings import allow_type, upload_dir
 
 router = APIRouter()
+
+
+def _ensure_owner(document_user_id: int, current_user: User) -> None:
+    """非本人操作 → 403（不存在已在调用前用 404 拦截）"""
+    if document_user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="无权限操作该文件"
+        )
 
 
 @router.get("/", response_model=PageResponse[DocumentOut])
@@ -40,21 +62,65 @@ async def upload_document(
         )
 
     filename = file.filename or "default_name"
-    content = await file.read()
     service = DocumentService(session)
+    # ServiceError（超限/空文件）由全局 handler 转 400
     doc = await service.add(
         filename=filename,
         mime_type=str(file.content_type),
-        content=content,
+        file=file,
         user_id=current_user.id,
     )
     if doc is None:
         raise HTTPException(status_code=400, detail="上传失败")
+    slug = doc.slug
     return UploadResult(
-        filename=file.filename or filename,
-        slug=doc.slug,
-        content_type=str(file.content_type),
+        filename=doc.raw_filename,
+        slug=slug,
+        content_type=doc.mime_type,
+        size_bytes=doc.size_bytes,
+        url=f"/document/{slug}",
     )
+
+
+@router.patch("/{slug}", response_model=DocumentOut)
+async def update_document(
+    slug: str,
+    data: DocumentUpdate,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """仅上传者可改展示名（下载时 Content-Disposition 用）；不替换文件内容"""
+    service = DocumentService(session)
+    doc = await service.find_by_slug(slug)
+    if doc is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Document not found"
+        )
+    _ensure_owner(doc.user_id, current_user)
+    updated = await service.rename(slug, data.raw_filename)
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Document not found"
+        )
+    return updated
+
+
+@router.delete("/{slug}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_document(
+    slug: str,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """仅上传者可删：DB 记录 + 磁盘文件一并清理"""
+    service = DocumentService(session)
+    doc = await service.find_by_slug(slug)
+    if doc is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Document not found"
+        )
+    _ensure_owner(doc.user_id, current_user)
+    await service.remove(slug)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{slug}")
