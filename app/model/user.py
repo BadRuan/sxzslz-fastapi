@@ -45,3 +45,6 @@ class User(SQLModel, table=True):
             return True
         except (VerifyMismatchError, InvalidHash):
             return False
+
+    def set_password(self, plain_password: str) -> None:
+        self.password = ph.hash(plain_password)

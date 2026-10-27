@@ -26,11 +26,8 @@ async def create_article(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    service = ArticleService(session)
-    try:
-        return await service.create(data, user_id=current_user.id)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    # 业务校验失败（ServiceError）由全局 handler 统一转 400
+    return await ArticleService(session).create(data, user_id=current_user.id)
 
 
 @router.post("/batch-category", response_model=ArticleBatchCategoryOut)
@@ -40,11 +37,7 @@ async def batch_apply_category(
     _: User = Depends(get_current_user),
 ):
     """批量将多篇文章加入/移出一个二级分类（幂等；未知 slug 或无效分类返回 400）"""
-    service = ArticleService(session)
-    try:
-        return await service.batch_category(data)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    return await ArticleService(session).batch_category(data)
 
 
 @router.get("/", response_model=PageResponse[ArticleOut])
@@ -80,11 +73,7 @@ async def update_article(
     session: AsyncSession = Depends(get_session),
     _: User = Depends(get_current_user),
 ):
-    service = ArticleService(session)
-    try:
-        article = await service.update(slug, data)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    article = await ArticleService(session).update(slug, data)
     if article is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")
     return article

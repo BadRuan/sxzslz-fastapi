@@ -14,7 +14,8 @@ engine = create_async_engine(
 
 
 async def get_session():
-    """请求级会话：成功结束自动 commit，异常 rollback。DAO 层只 flush，不要自行 commit。"""
+    """请求级会话：成功结束自动 commit，异常 rollback。DAO 层只 flush，不要自行 commit。
+    （退出 with 块时由上下文管理器负责 close，无需手动 finally。）"""
     async with AsyncSession(engine) as session:
         try:
             yield session
@@ -22,8 +23,6 @@ async def get_session():
         except Exception:
             await session.rollback()
             raise
-        finally:
-            await session.close()
 
 
 async def init_db() -> None:

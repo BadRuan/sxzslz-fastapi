@@ -34,7 +34,7 @@ async def get_images(
 async def upload_image(
     file: UploadFile,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     if file.content_type not in allow_type.image:
         raise HTTPException(
@@ -45,7 +45,10 @@ async def upload_image(
     content = await file.read()
     service = ImageService(session)
     image = await service.add(
-        filename=filename, mime_type=str(file.content_type), content=content
+        filename=filename,
+        mime_type=str(file.content_type),
+        content=content,
+        user_id=current_user.id,
     )
     if image is None:
         raise HTTPException(status_code=400, detail="上传失败")

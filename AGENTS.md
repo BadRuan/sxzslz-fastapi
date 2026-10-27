@@ -30,17 +30,17 @@ uv run pytest tests/test_article_api.py::test_name   # 单测
 - 分类排序用 `sort`（越小越靠前，同级之间），PATCH 可调；列表/树按 `sort, id` 升序。
 - 文章只有一个可见性字段 `is_deleted`（无 `is_hidden`）：`DELETE` 软删除进回收站，列表默认过滤已删文章，后台用 `GET /articles/?is_deleted=true` 枚举回收站、`POST /articles/{slug}/restore` 恢复（需登录，幂等）。分类**硬删除**，删一级分类会**级联删除子分类**并清理 `article_category` 关联（业务层外键，无数据库外键）。
 - 批量分类：`POST /articles/batch-category`（需登录）`{slugs[], category_id, mode: add|remove}`，只作用于未删除文章，幂等；任一 slug 不存在/无效分类 → 400 整批不生效（直接操作 `article_category` 关联表）。
-- `view_count` 在公开详情 `GET /articles/{slug}` 成功访问时原子 +1（已删文章 404 且不计数）；`like_count` 走 `POST /articles/{slug}/like`。图片/文件**上传**需登录（读接口公开）。
+- `view_count` 在公开详情 `GET /articles/{slug}` 成功访问时原子 +1（已删文章 404 且不计数）；`like_count` 走 `POST /articles/{slug}/like`。图片/文件**上传**需登录（读接口公开），`user_id` 取当前登录用户（业务层关联，无 DB 外键；**必填无默认**，存量迁移已用 `scripts/migrate_add_user_id.py` 对部署库执行——加列、存量置 1、SET NOT NULL，脚本幂等，其他环境跑同一脚本）。
 - 文章作者取当前登录用户（`POST /articles/` 从 JWT 解析）；`settings.DEFAULT_USER_ID` 仅作 service 层不传 `user_id` 时的兜底。`GET /articles/` 支持 `user_id` 过滤（后台展示登录账户文章）。
 - 上传落盘 `./uploads/`（`app/settings.py` 的 `upload_dir`）。
-- 业务校验错误：service 抛 `ValueError` → router 转 400 `{"detail": "..."}`；资源不存在 → 404；参数格式非法 → 422。
+- 业务校验错误：dao/service 抛 `ServiceError`（`ValueError` 子类，`app/errors.py`）→ 全局 handler 转 400 `{"detail": "..."}`（路由层不 try/except）；资源不存在 → 404；参数格式非法 → 422。
 - ArticleUpdate 的 null 语义：可空字段显式 `null` 表示清空；非空字段传 `null` 返回 400。
 
 ## 鉴权
 
 JWT Bearer（`pyjwt`，HS256，密钥 `settings.SECRET_KEY`）。
 
-- `POST /auth/login` → `{"access_token", "token_type": "bearer"}`；`GET /auth/me` 返回当前用户。
+- `POST /auth/login` → `{"access_token", "token_type": "bearer"}`；`GET /auth/me` 返回当前用户；`PUT /auth/password` 改密（body `{old_password, new_password}`，需登录；旧密码错 → ServiceError 400，新密码 <6 位 → 422）。
 - **读接口公开；写操作（分类/文章的 POST/PATCH/DELETE）需 `Authorization: Bearer <token>`**，否则 401。
 - 校验逻辑在 `app/auth.py:get_current_user`；测试用 `auth_headers` fixture（`tests/conftest.py`）。
 - 无注册接口，用户通过 `User.create_user`（Argon2）入库；测试里的 `default_user` 密码是 `test123`。

@@ -1,6 +1,8 @@
 from typing import List, Optional
+from sqlalchemy import delete as sa_delete
 from sqlmodel import select, asc
 from sqlmodel.ext.asyncio.session import AsyncSession
+from app.errors import ServiceError
 from app.model import ArticleCategory, Category
 from app.schema import CategoryTree
 
@@ -46,9 +48,9 @@ class CategoryCrud:
         if parent_id != 0:
             parent = await self.get_raw_by_id(parent_id)
             if parent is None:
-                raise ValueError("父分类不存在")
+                raise ServiceError("父分类不存在")
             if parent.parent_id != 0:
-                raise ValueError("仅支持二级分类，不能创建三级分类")
+                raise ServiceError("仅支持二级分类，不能创建三级分类")
         category = Category(name=name, parent_id=parent_id, sort=sort)
         self.session.add(category)
         await self.session.flush()
@@ -77,32 +79,27 @@ class CategoryCrud:
     async def _reparent(self, category: Category, new_parent_id: int) -> None:
         """二级分类仅可改挂到另一个一级分类下；一级分类固定在顶层。"""
         if category.parent_id == 0:
-            raise ValueError("一级分类不支持调整父级")
+            raise ServiceError("一级分类不支持调整父级")
         if new_parent_id == 0:
-            raise ValueError("仅支持二级分类，不能调整为一级分类")
+            raise ServiceError("仅支持二级分类，不能调整为一级分类")
         parent = await self.get_raw_by_id(new_parent_id)
         if parent is None:
-            raise ValueError("父分类不存在")
+            raise ServiceError("父分类不存在")
         if parent.parent_id != 0:
-            raise ValueError("父分类必须是一级分类")
+            raise ServiceError("父分类必须是一级分类")
         category.parent_id = parent.id
 
     async def delete(self, category_id: int) -> bool:
-        """硬删除分类：级联删除子分类，并清理文章关联（业务层外键）。"""
+        """硬删除分类：级联删除子分类，并批量清理文章关联（业务层外键）。"""
         category = await self.get_raw_by_id(category_id)
         if category is None:
             return False
-        ids = [category.id]
-        ids.extend(c.id for c in await self.get_children(category.id))
+        ids = [category.id, *(c.id for c in await self.get_children(category.id))]
 
-        links = (await self.session.exec(
-            select(ArticleCategory).where(ArticleCategory.category_id.in_(ids))  # type: ignore
-        )).all()
-        for link in links:
-            await self.session.delete(link)
-        for cid in ids:
-            node = await self.get_raw_by_id(cid)
-            if node is not None:
-                await self.session.delete(node)
+        # 两条批量 DELETE，替代原先逐行 session.delete 的 1+N 往返
+        await self.session.exec(
+            sa_delete(ArticleCategory).where(ArticleCategory.category_id.in_(ids))
+        )
+        await self.session.exec(sa_delete(Category).where(Category.id.in_(ids)))
         await self.session.flush()
         return True

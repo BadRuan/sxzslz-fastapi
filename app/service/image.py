@@ -1,49 +1,46 @@
-from typing import Optional
-from os import path, makedirs, remove
+from os import path, remove
 from pathlib import Path
+from typing import Optional
+
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.settings import upload_dir
-from app.model import Image
+
 from app.dao import ImageCrud
+from app.model import Image
 from app.model.image import generate_slug
-from app.schema import ImageOut, PageResponse
-from app.utils import generate_webp_images
+from app.schema import PageResponse, ImageOut, page_response
+from app.settings import upload_dir
+from app.utils import ensure_dirs, generate_webp_images, write_bytes_async
+
 
 class ImageService:
     def __init__(self, session: AsyncSession) -> None:
         self.crud = ImageCrud(session)
-        for i in [upload_dir.image_preview, upload_dir.image_raw]:
-            if not path.exists(i):
-                makedirs(i)
-    
+
     async def list_paginated(self, page: int, page_size: int) -> PageResponse[ImageOut]:
         items, total = await self.crud.list_paginated(page, page_size)
-        return PageResponse(
-            data=[ImageOut.model_validate(i) for i in items],
-            total=total,
-            page=page,
-            page_size=page_size,
-            has_next=page * page_size < total,
+        return page_response(
+            [ImageOut.model_validate(i) for i in items], total, page, page_size
         )
-    
-    async def add(self, filename: str, mime_type: str, content: bytes) -> Optional[Image]:
+
+    async def add(
+        self, filename: str, mime_type: str, content: bytes, user_id: int
+    ) -> Optional[Image]:
         suffix = Path(filename).suffix
         slugname = generate_slug() + suffix
-        filepath = path.join(upload_dir.image_raw, slugname)
-        
-        with open(filepath, 'wb') as f:
-            f.write(content)
-        # 生成预览图和缩略图
+        # 只在真正落盘时确保目录存在（exist_ok，避免每个请求都建目录）
+        ensure_dirs((upload_dir.image_raw, upload_dir.image_preview))
+        await write_bytes_async(path.join(upload_dir.image_raw, slugname), content)
+        # 生成预览图和缩略图（PIL 在线程池执行）
         await generate_webp_images(slugname)
-        
+
         await self.crud.add(
             raw_filename=filename,
             slug=slugname,
             mime_type=mime_type,
-            size=len(content)
+            size=len(content),
+            user_id=user_id,
         )
-        image = await self.crud.get_by_slug(slugname)
-        return image
+        return await self.crud.get_by_slug(slugname)
 
     async def remove_by_slug(self, slugname: str) -> bool:
         result = await self.crud.remove_by_slug(slugname)
@@ -58,12 +55,13 @@ class ImageService:
                 remove(preview_file_path)
             return True
         return False
-    
+
     async def get_by_slug(self, slugname: str) -> Optional[Image]:
         image: Optional[Image] = await self.crud.get_by_slug(slugname)
-        if image is not None:
-            await self.crud.record_view(slugname)
-            await self.crud.session.refresh(image)
-            return image
-        else:
+        if image is None:
             return None
+        # 原子自增并用 RETURNING 的新计数就地更新，省掉一次 refresh 查询
+        new_view = await self.crud.record_view(slugname)
+        if new_view is not None:
+            image.view = new_view
+        return image

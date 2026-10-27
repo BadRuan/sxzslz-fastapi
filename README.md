@@ -4,6 +4,8 @@
 
 前端对接只需关注两件事：**登录拿 token**、**按下方接口文档调用**。
 
+> 📄 **前端同学请直接看 [docs/frontend-api.md](docs/frontend-api.md)**：面向对接的完整文档，含鉴权流程、错误处理、全部接口的真实响应示例与 FAQ。
+
 ## 对接约定
 
 | 约定 | 说明 |
@@ -136,6 +138,20 @@ Authorization: Bearer <access_token>
 }
 ```
 
+### 4. 修改密码
+
+```http
+PUT /auth/password
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{"old_password": "当前密码", "new_password": "新密码（至少 6 位）"}
+```
+
+**响应** `200`：`{"detail": "密码修改成功"}`
+
+**失败**：`400` 原密码错误；`401` 未登录 / token 无效；`422` 新密码不足 6 位或缺字段。修改成功后旧 token 在过期前仍有效，前端应引导用户用新密码重新登录。
+
 ### 错误码约定
 
 | 状态码 | 含义 | 响应体 |
@@ -147,8 +163,9 @@ Authorization: Bearer <access_token>
 | 401 | 未认证 / token 无效或过期 | `{"detail": "..."}`（**字符串**） |
 | 404 | 资源不存在 | `{"detail": "..."}`（**字符串**） |
 | 422 | 请求参数格式非法 | `{"detail": [...]}`（**数组**，见下方示例） |
+| 500 | 服务器内部未预期异常 | `{"detail": "服务器内部错误"}`（**字符串**） |
 
-> 解析规则：`400` / `401` / `404` 的 `detail` 是字符串，可直接展示；`422` 的 `detail` 是数组，取 `detail[0].msg` 展示。
+> 解析规则：`400` / `401` / `404` / `500` 的 `detail` 是字符串，可直接展示；`422` 的 `detail` 是数组，取 `detail[0].msg` 展示。
 
 **401 的 `detail` 取值**（均带 `WWW-Authenticate: Bearer` 响应头）：
 
@@ -178,6 +195,7 @@ Authorization: Bearer <access_token>
 | detail | 触发场景 |
 |--------|----------|
 | 用户名或密码错误 | 登录失败 |
+| 原密码错误 | 修改密码时旧密码不匹配 |
 | 父分类不存在 | `parent_id` 指向的分类不存在 |
 | 仅支持二级分类，不能创建三级分类 | 在二级分类下再挂子分类 |
 | 一级分类不支持调整父级 | PATCH 给一级分类改 `parent_id` |
@@ -200,6 +218,7 @@ Authorization: Bearer <access_token>
 |------|------|------|------|----------|
 | POST | `/auth/login` | ✗ | 登录，返回 JWT | `TokenOut` |
 | GET | `/auth/me` | ✓ | 获取当前登录用户 | `UserOut` |
+| PUT | `/auth/password` | ✓ | 修改当前用户密码 | `{"detail": ...}` |
 | GET | `/base/` | ✗ | 首页基础信息（分类树 + 用户列表） | `BaseInfoOut` |
 | GET | `/categories/` | ✗ | 分类列表（扁平） | `CategoryOut[]` |
 | POST | `/categories/` | ✓ | 创建分类 | `CategoryOut` |
@@ -592,8 +611,14 @@ file: <二进制图片>
       "raw_filename": "photo.png",
       "mime_type": "image/png",
       "size_bytes": 102400,
+      "user_id": 20,
       "view": 0,
-      "uploaded_at": "2026-10-17T10:00:00"
+      "uploaded_at": "2026-10-17T10:00:00",
+      "user": {
+        "id": 20,
+        "slug": "jjqczj",
+        "nickname": "芜湖市鸠江区财政局"
+      }
     }
   ],
   "total": 50,
@@ -602,6 +627,8 @@ file: <二进制图片>
   "has_next": true
 }
 ```
+
+> `user` 为上传者（业务层关联）；对应用户不存在时为 `null`。
 
 ### GET `/image/{slug}`
 
@@ -654,11 +681,42 @@ file: <二进制文件>
 
 ### GET `/document/`
 
-分页获取已上传文件列表。按 `id` 倒序（最新上传在前）。
+分页获取已上传文件列表。
 
-**查询参数**：同图片列表（`page` 默认 1、`page_size` 默认 30，1 ~ 100）
+**查询参数**：同图片列表（`page` 默认 1、`page_size` 默认 30，1 ~ 100），另支持 `sort` 排序字段（均倒序，非法值 422）：
 
-**响应** `200`：`PageResponse[DocumentOut]`，结构与字段同图片列表
+| 值 | 含义 |
+| --- | --- |
+| `uploaded_at`（默认） | 按上传时间倒序，最新上传在前 |
+| `view` | 按浏览量倒序，最热在前 |
+
+**响应** `200`：`PageResponse[DocumentOut]`（字段同图片列表，含 `user_id` 与上传者 `user`）：
+
+```json
+{
+  "data": [
+    {
+      "id": 3,
+      "slug": "a1b2c3d4e5f6g7h8.pdf",
+      "raw_filename": "报告.pdf",
+      "mime_type": "application/pdf",
+      "size_bytes": 20480,
+      "user_id": 20,
+      "view": 12,
+      "uploaded_at": "2026-10-17T10:05:00",
+      "user": {
+        "id": 20,
+        "slug": "jjqczj",
+        "nickname": "芜湖市鸠江区财政局"
+      }
+    }
+  ],
+  "total": 40,
+  "page": 1,
+  "page_size": 30,
+  "has_next": true
+}
+```
 
 ### GET `/document/{slug}`
 
@@ -749,8 +807,10 @@ file: <二进制文件>
 | raw_filename | string | 原始文件名 |
 | mime_type | string | 上传时的 MIME 类型 |
 | size_bytes | int | 原始文件大小（字节） |
+| user_id | int | 上传者用户 id（**必填、无默认**，上传接口自动写入当前用户；存量数据已迁移为 1） |
 | view | int | 浏览量（每次成功 GET 自增） |
 | uploaded_at | datetime | 上传时间 |
+| user | UserOut \| null | 上传者 `{id, slug, nickname}`；对应用户不存在时为 null |
 
 ### PageResponse
 
@@ -771,20 +831,43 @@ file: <二进制文件>
 分层调用：`routers → service → dao → model`，请求/响应模型集中在 `app/schema/`。
 
 ```
-main.py                  # 入口：挂载路由、CORS、lifespan 启动建表
+main.py                  # 入口：挂载路由、CORS、访问日志中间件、lifespan 启动建表
 app/
-├── routers/             # 路由层：参数校验、异常 → HTTP 状态码
-├── service/             # 业务层：校验、分页组装，ValueError → 400
+├── routers/             # 路由层：参数校验、404 等 HTTP 状态码
+├── service/             # 业务层：校验、分页组装（page_response）
 ├── dao/                 # 数据层：SQLModel 查询，只 flush 不 commit
 ├── model/               # 表模型（Category / Article / Image / Document / User）
 ├── schema/              # 请求 / 响应 Pydantic 模型
 ├── auth.py              # JWT 签发与校验（get_current_user）
+├── errors.py            # ServiceError（业务校验错误）→ 全局 handler 转 400
 ├── settings.py          # .env 配置、上传目录、MIME 白名单
 ├── database.py          # 引擎、请求级会话（自动 commit/rollback）、init_db
-└── utils/               # WebP 预览图生成
+└── utils/               # WebP 预览图生成、异步文件写入
 tests/                   # pytest 用例与 fixtures（conftest.py）
 uploads/                 # 上传落盘目录（已 gitignore）
 ```
+
+---
+
+## 数据库升级（存量库）
+
+启动时的 `create_all` 只建新表、**不会修改已有表结构**。`image` / `document` 的 `user_id` 列迁移**已在部署库执行**（存量数据已置 1）；其他环境（如新搭环境的旧备份库）可用幂等脚本同步：
+
+```bash
+uv run python scripts/migrate_add_user_id.py
+```
+
+脚本做的事（PG，可重复执行）：
+
+```sql
+ALTER TABLE image ADD COLUMN IF NOT EXISTS user_id INTEGER;
+UPDATE image SET user_id = 1 WHERE user_id IS NULL;
+ALTER TABLE image ALTER COLUMN user_id SET NOT NULL;
+ALTER TABLE image ALTER COLUMN user_id DROP DEFAULT;
+-- document 同样四条
+```
+
+`user_id` 为业务层关联（无数据库外键），**必填、无默认值**——上传接口自动写入当前登录用户 id。
 
 ---
 

@@ -1,5 +1,9 @@
+import asyncio
 from os import path
+from typing import Tuple
+
 from PIL import Image
+
 from app.settings import upload_dir
 
 
@@ -10,8 +14,7 @@ def _has_transparency(img: Image.Image) -> bool:
     return "transparency" in img.info
 
 
-async def generate_webp_images(slug_name: str, preview_size=(1200, 1200)) -> str:
-    """生成 WebP 预览图；PNG/GIF 等透明图保留透明通道，返回预览图路径。"""
+def _generate_webp_sync(slug_name: str, preview_size: Tuple[int, int]) -> str:
     slug, _ = path.splitext(slug_name)
     path_raw = path.join(upload_dir.image_raw, slug_name)
     path_preview = path.join(upload_dir.image_preview, slug + ".webp")
@@ -25,3 +28,11 @@ async def generate_webp_images(slug_name: str, preview_size=(1200, 1200)) -> str
         preview_img.save(path_preview, "WEBP", quality=85, method=6)
 
         return path_preview
+
+
+async def generate_webp_images(slug_name: str, preview_size: Tuple[int, int] = (1200, 1200)) -> str:
+    """生成 WebP 预览图；PNG/GIF 等透明图保留透明通道，返回预览图路径。
+
+    解码/缩放/编码是 CPU + 磁盘密集操作，放到线程池执行，避免阻塞事件循环。
+    """
+    return await asyncio.to_thread(_generate_webp_sync, slug_name, preview_size)

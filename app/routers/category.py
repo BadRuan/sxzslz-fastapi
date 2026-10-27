@@ -17,11 +17,8 @@ async def create_category(
     session: AsyncSession = Depends(get_session),
     _: User = Depends(get_current_user),
 ):
-    service = CategoryService(session)
-    try:
-        return await service.create(data)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    # 业务校验失败（ServiceError）由全局 handler 统一转 400
+    return await CategoryService(session).create(data)
 
 
 @router.get("/", response_model=List[CategoryOut])
@@ -46,11 +43,7 @@ async def update_category(
     session: AsyncSession = Depends(get_session),
     _: User = Depends(get_current_user),
 ):
-    service = CategoryService(session)
-    try:
-        category = await service.update(category_id, data)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    category = await CategoryService(session).update(category_id, data)
     if category is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分类不存在")
     return category

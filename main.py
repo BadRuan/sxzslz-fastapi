@@ -1,10 +1,24 @@
+import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from time import perf_counter
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from uvicorn import run
+
 from app.database import init_db
+from app.errors import register_error_handlers
+from app.routers import (
+    article_router,
+    auth_router,
+    baseinfo_router,
+    category_router,
+    document_router,
+    image_router,
+)
 from app.settings import cors_origins
-from app.routers import baseinfo_router, category_router, article_router, auth_router, image_router, document_router
+
+logger = logging.getLogger("sxzslz.access")
 
 
 @asynccontextmanager
@@ -28,12 +42,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth_router, prefix='/auth', tags=['认证模块'])
-app.include_router(baseinfo_router, tags=['基础信息模块'])
-app.include_router(category_router, prefix='/categories', tags=['分类模块'])
-app.include_router(article_router, prefix='/articles', tags=['文章模块'])
-app.include_router(image_router, prefix='/image', tags=['图片模块'])
-app.include_router(document_router, prefix='/document', tags=['文件模块'])
+# 业务校验错误（ServiceError）→ 400 {"detail": ...}，路由层无需各自 try/except
+register_error_handlers(app)
+
+
+@app.middleware("http")
+async def log_request_duration(request: Request, call_next):
+    """访问日志：记录每个请求的状态码与耗时，便于定位慢接口"""
+    started_at = perf_counter()
+    response = await call_next(request)
+    duration_ms = (perf_counter() - started_at) * 1000
+    logger.info(
+        "%s %s -> %s (%.1fms)",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+    )
+    return response
+
+
+for router, prefix, tags in [
+    (auth_router, "/auth", ["认证模块"]),
+    (baseinfo_router, "", ["基础信息模块"]),
+    (category_router, "/categories", ["分类模块"]),
+    (article_router, "/articles", ["文章模块"]),
+    (image_router, "/image", ["图片模块"]),
+    (document_router, "/document", ["文件模块"]),
+]:
+    app.include_router(router, prefix=prefix, tags=tags)
 
 
 if __name__ == '__main__':

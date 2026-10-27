@@ -11,6 +11,7 @@ async def _seed_images(session, n: int) -> None:
                 slug=f"slug{i}.png",
                 mime_type="image/png",
                 size_bytes=10,
+                user_id=1,
             )
         )
     await session.flush()
@@ -24,6 +25,7 @@ async def _seed_documents(session, n: int) -> None:
                 slug=f"slug{i}.pdf",
                 mime_type="application/pdf",
                 size_bytes=10,
+                user_id=1,
             )
         )
     await session.flush()
@@ -60,3 +62,76 @@ async def test_document_list_has_next_boundary_exact_multiple(session):
     page = await service.list_paginated(page=2, page_size=2)
     assert page.has_next is False
     assert page.total == 4
+
+
+async def test_document_list_ordered_by_upload_time_desc(session):
+    """文档列表默认按上传时间倒序（最新上传在前）"""
+    from datetime import datetime, timedelta
+
+    now = datetime.now()
+    ages = [timedelta(hours=1), timedelta(hours=3), timedelta(hours=2)]
+    for i, age in enumerate(ages):
+        session.add(
+            Document(
+                raw_filename=f"doc{i}.pdf",
+                slug=f"slug{i}.pdf",
+                mime_type="application/pdf",
+                size_bytes=10,
+                user_id=1,
+                uploaded_at=now - age,
+            )
+        )
+    await session.flush()
+
+    service = DocumentService(session)
+    page = await service.list_paginated(page=1, page_size=10)
+    assert [d.slug for d in page.data] == ["slug0.pdf", "slug2.pdf", "slug1.pdf"]
+
+
+async def test_document_list_sort_by_view(session):
+    """sort=view 时按浏览量倒序"""
+    from app.schema import DocumentSort
+
+    views = [5, 30, 10]
+    for i, v in enumerate(views):
+        session.add(
+            Document(
+                raw_filename=f"doc{i}.pdf",
+                slug=f"slug{i}.pdf",
+                mime_type="application/pdf",
+                size_bytes=10,
+                user_id=1,
+                view=v,
+            )
+        )
+    await session.flush()
+
+    service = DocumentService(session)
+    page = await service.list_paginated(page=1, page_size=10, sort=DocumentSort.view)
+    assert [d.slug for d in page.data] == ["slug1.pdf", "slug2.pdf", "slug0.pdf"]
+
+
+async def test_document_list_sort_api_param(client, session):
+    """API 层：sort 参数可选，非法值 422"""
+    for i, v in enumerate([5, 30]):
+        session.add(
+            Document(
+                raw_filename=f"doc{i}.pdf",
+                slug=f"slug{i}.pdf",
+                mime_type="application/pdf",
+                size_bytes=10,
+                user_id=1,
+                view=v,
+            )
+        )
+    await session.flush()
+
+    # 默认：上传时间倒序（同批插入，顺序按 SQLite 返回即可，只校验 200 与结构）
+    default_resp = await client.get("/document/")
+    assert default_resp.status_code == 200
+
+    view_resp = await client.get("/document/?sort=view")
+    assert view_resp.status_code == 200
+    assert [d["slug"] for d in view_resp.json()["data"]] == ["slug1.pdf", "slug0.pdf"]
+
+    assert (await client.get("/document/?sort=create_at")).status_code == 422

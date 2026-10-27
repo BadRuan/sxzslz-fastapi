@@ -7,15 +7,20 @@ from app.schema.article import (
     ArticleOut,
     ArticleUpdate,
 )
-from app.schema.auth import LoginRequest, TokenOut
+from app.schema.auth import (
+    LoginRequest,
+    PasswordChangeOut,
+    PasswordChangeRequest,
+    TokenOut,
+)
 from app.schema.category import (
     CategoryCreate,
     CategoryOut,
     CategoryTree,
     CategoryUpdate,
 )
-from app.schema.common import PageResponse
-from app.schema.file import DocumentOut, ImageOut, UploadResult
+from app.schema.common import PageResponse, page_response
+from app.schema.file import DocumentOut, DocumentSort, ImageOut, UploadResult
 from app.schema.user import BaseInfoOut, UserOut
 
 __all__ = [
@@ -32,10 +37,14 @@ __all__ = [
     "CategoryTree",
     "CategoryUpdate",
     "DocumentOut",
+    "DocumentSort",
     "ImageOut",
     "LoginRequest",
     "PageResponse",
+    "PasswordChangeOut",
+    "PasswordChangeRequest",
     "TokenOut",
     "UploadResult",
     "UserOut",
+    "page_response",
 ]

@@ -3,6 +3,7 @@ from sqlalchemy import delete as sa_delete, exists, insert as sa_insert
 from sqlalchemy.orm import selectinload
 from sqlmodel import select, func, desc, update
 from sqlmodel.ext.asyncio.session import AsyncSession
+from app.errors import ServiceError
 from app.model import Article, ArticleCategory, Category
 
 
@@ -70,10 +71,10 @@ class ArticleCrud:
             )
         )).all()
         if len(categories) != len(set(category_ids)):
-            raise ValueError("存在无效的分类")
+            raise ServiceError("存在无效的分类")
         for category in categories:
             if category.parent_id == 0:
-                raise ValueError("文章仅支持关联二级分类")
+                raise ServiceError("文章仅支持关联二级分类")
         return list(categories)
 
     async def create(
@@ -110,7 +111,7 @@ class ArticleCrud:
         # 先校验后赋值，避免中途抛错留下脏对象
         for key, value in fields.items():
             if value is None and key not in self.NULLABLE_FIELDS:
-                raise ValueError(f"字段 {key} 不能为空")
+                raise ServiceError(f"字段 {key} 不能为空")
         for key, value in fields.items():
             setattr(article, key, value)
         if has_categories:
@@ -122,10 +123,10 @@ class ArticleCrud:
         self, slugs: List[str], category_id: int, mode: Literal["add", "remove"]
     ) -> int:
         """批量加入/移出一个二级分类（幂等：add 补缺失关联，remove 直接删关联）。
-        任一 slug 不存在或已删除 → ValueError（先校验后变更，整批不生效）。
+        任一 slug 不存在或已删除 → ServiceError（先校验后变更，整批不生效）。
         直接操作关联表，避免批量场景加载 ORM 关联集合。"""
         unique_slugs = list(dict.fromkeys(slugs))
-        await self._resolve_categories([category_id])  # 校验（一级/不存在 → ValueError）
+        await self._resolve_categories([category_id])  # 校验（一级/不存在 → ServiceError）
         rows = (await self.session.exec(
             select(Article.id).where(
                 Article.slug.in_(unique_slugs),
@@ -138,7 +139,7 @@ class ArticleCrud:
                 select(Article.id, Article.slug).where(Article.slug.in_(unique_slugs))
             )).all()]
             missing = sorted(set(unique_slugs) - set(slugs_found))
-            raise ValueError(f"文章不存在或已删除: {', '.join(missing)}")
+            raise ServiceError(f"文章不存在或已删除: {', '.join(missing)}")
         if mode == "add":
             linked = {int(r) for r in (await self.session.exec(
                 select(ArticleCategory.article_id).where(
@@ -151,9 +152,9 @@ class ArticleCrud:
                 for aid in article_ids if aid not in linked
             ]
             if to_insert:
-                await self.session.execute(sa_insert(ArticleCategory), to_insert)
+                await self.session.exec(sa_insert(ArticleCategory), params=to_insert)
         else:
-            await self.session.execute(
+            await self.session.exec(
                 sa_delete(ArticleCategory).where(
                     ArticleCategory.article_id.in_(article_ids),
                     ArticleCategory.category_id == category_id,
@@ -163,32 +164,28 @@ class ArticleCrud:
         return len(article_ids)
 
     async def increment_like(self, slug: str) -> Optional[int]:
-        """匿名点赞：原子自增 like_count，返回最新计数；文章不存在（或已删除）返回 None"""
-        result = await self.session.execute(
+        """匿名点赞：原子自增并返回最新计数（UPDATE ... RETURNING 单次往返）；
+        文章不存在（或已删除）返回 None"""
+        result = await self.session.exec(
             update(Article)
             .where(Article.slug == slug, Article.is_deleted == False)  # noqa: E712
             .values(like_count=Article.like_count + 1)
+            .returning(Article.like_count)
         )
-        if result.rowcount == 0:
-            return None
-        count = (await self.session.exec(
-            select(Article.like_count).where(Article.slug == slug)
-        )).one()
-        return int(count)
+        row = result.first()
+        return int(row[0]) if row is not None else None
 
     async def increment_view(self, slug: str) -> Optional[int]:
-        """浏览量：原子自增 view_count，返回最新计数；文章不存在（或已删除）返回 None"""
-        result = await self.session.execute(
+        """浏览量：原子自增并返回最新计数（UPDATE ... RETURNING 单次往返）；
+        文章不存在（或已删除）返回 None"""
+        result = await self.session.exec(
             update(Article)
             .where(Article.slug == slug, Article.is_deleted == False)  # noqa: E712
             .values(view_count=Article.view_count + 1)
+            .returning(Article.view_count)
         )
-        if result.rowcount == 0:
-            return None
-        count = (await self.session.exec(
-            select(Article.view_count).where(Article.slug == slug)
-        )).one()
-        return int(count)
+        row = result.first()
+        return int(row[0]) if row is not None else None
 
     async def soft_delete(self, slug: str) -> bool:
         article = await self.get_by_slug(slug)

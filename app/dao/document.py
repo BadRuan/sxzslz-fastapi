@@ -1,63 +1,9 @@
-from typing import List, Optional, Tuple
-
-from sqlmodel import desc, func, select, update
-from sqlmodel.ext.asyncio.session import AsyncSession
-
+from app.dao.file import FileCrud
 from app.model import Document
 
 
-class DocumentCrud:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
+class DocumentCrud(FileCrud[Document]):
+    """document 表：分页按上传时间倒序（最新在前）"""
 
-    async def list_paginated(
-        self, page: int, page_size: int
-    ) -> Tuple[List[Document], int]:
-        count_stmt = select(func.count()).select_from(Document)
-        total = await self.session.exec(count_stmt)
-        total_count: int = total.one()
-
-        offset = (page - 1) * page_size
-
-        data_stmt = (
-            select(Document)
-            .offset(offset)
-            .limit(page_size)
-            .order_by(desc(Document.view))
-        )
-        results = await self.session.exec(data_stmt)
-        items: List[Document] = list(results.all())
-        return items, total_count
-
-    async def get_by_slug(self, slugname: str) -> Optional[Document]:
-        stmt = select(Document).where(Document.slug == slugname)
-        result = await self.session.exec(stmt)
-        return result.first()
-
-    async def add(
-        self, raw_filename: str, slug: str, mime_type: str, size: int
-    ) -> Document:
-        document_record = Document(
-            raw_filename=raw_filename,
-            slug=slug,
-            mime_type=mime_type,
-            size_bytes=size,
-        )
-        self.session.add(document_record)
-        await self.session.flush()
-        return document_record
-
-    async def record_view(self, slugname: str) -> None:
-        stmt = (
-            update(Document)
-            .where(Document.slug == slugname)  # type: ignore
-            .values(view=Document.view + 1)
-        )
-        await self.session.exec(stmt)
-
-    async def remove_by_slug(self, slugname: str) -> bool:
-        document = await self.get_by_slug(slugname)
-        if document is not None:
-            await self.session.delete(document)
-            return True
-        return False
+    model = Document
+    order_by_field = "uploaded_at"

@@ -10,6 +10,7 @@ from app.schema import (
     ArticleOut,
     ArticleDetailOut,
     PageResponse,
+    page_response,
 )
 
 
@@ -42,13 +43,8 @@ class ArticleService:
         items, total = await self.crud.list_paginated(
             page, page_size, category_id, user_id, is_deleted
         )
-        data = [ArticleOut.model_validate(a) for a in items]
-        return PageResponse(
-            data=data,
-            total=total,
-            page=page,
-            page_size=page_size,
-            has_next=page * page_size < total,
+        return page_response(
+            [ArticleOut.model_validate(a) for a in items], total, page, page_size
         )
 
     async def get_by_slug(self, slug: str) -> Optional[ArticleDetailOut]:
@@ -81,7 +77,7 @@ class ArticleService:
         return await self.crud.soft_delete(slug)
 
     async def batch_category(self, data: ArticleBatchCategoryIn) -> ArticleBatchCategoryOut:
-        """批量加入/移出分类；分类无效或文章不存在抛 ValueError（→400）"""
+        """批量加入/移出分类；分类无效或文章不存在抛 ServiceError（→400）"""
         affected = await self.crud.batch_apply_category(
             data.slugs, data.category_id, data.mode
         )
