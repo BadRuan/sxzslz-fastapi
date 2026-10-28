@@ -1,7 +1,7 @@
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.auth import get_current_user
+from app.auth import get_current_user, get_optional_user, require_superuser
 from app.database import get_session
 from app.model import User
 from app.service import ArticleService
@@ -19,6 +19,8 @@ from app.schema import (
 
 router = APIRouter()
 
+CATEGORY_MANAGE_FORBIDDEN = "仅超级管理员可管理文章分类"
+
 
 def _ensure_can_modify(
     article_user_id: int, current_user: User, *, detail: str = "无权修改他人文章"
@@ -26,6 +28,16 @@ def _ensure_can_modify(
     """非作者且非超管 → 403（不存在已在调用前用 404 拦截）"""
     if article_user_id != current_user.id and not current_user.is_superuser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+
+
+def _resolve_visible_user_id(
+    requested_user_id: Optional[int], current_user: Optional[User]
+) -> Optional[int]:
+    """列表可见范围：普通用户恒定只看自己的文章（user_id 参数被忽略）；
+    超管按请求参数自由过滤；匿名（公开前台）不做限制"""
+    if current_user is None or current_user.is_superuser:
+        return requested_user_id
+    return current_user.id
 
 
 @router.post("/", response_model=ArticleDetailOut, status_code=status.HTTP_201_CREATED)
@@ -48,9 +60,9 @@ async def create_article(
 async def batch_apply_category(
     data: ArticleBatchCategoryIn,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_superuser(CATEGORY_MANAGE_FORBIDDEN)),
 ):
-    """批量将多篇文章加入/移出一个二级分类（幂等；未知 slug 或无效分类返回 400）"""
+    """批量将多篇文章加入/移出一个二级分类（仅超管；幂等；未知 slug 或无效分类返回 400）"""
     return await ArticleService(session).batch_category(data)
 
 
@@ -65,9 +77,18 @@ async def list_articles(
         description="false（默认）只返回未删除文章；true 只返回回收站文章（后台）",
     ),
     session: AsyncSession = Depends(get_session),
+    current_user: Optional[User] = Depends(get_optional_user),
 ):
+    """可见范围：匿名=公开全量；普通用户=固定只返回自己的文章（user_id 参数被忽略）；
+    超管=全部（可按 user_id 过滤 / is_deleted 查回收站）"""
     service = ArticleService(session)
-    return await service.list_paginated(page, page_size, category_id, user_id, is_deleted)
+    return await service.list_paginated(
+        page,
+        page_size,
+        category_id,
+        _resolve_visible_user_id(user_id, current_user),
+        is_deleted,
+    )
 
 
 @router.get("/{slug}", response_model=ArticleDetailOut)

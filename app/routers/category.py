@@ -1,7 +1,7 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.auth import get_current_user
+from app.auth import get_current_user, require_superuser
 from app.database import get_session
 from app.model import User
 from app.service import CategoryService
@@ -10,12 +10,14 @@ from app.schema import CategoryCreate, CategoryUpdate, CategoryOut
 
 router = APIRouter()
 
+CATEGORY_MANAGE_FORBIDDEN = "仅超级管理员可管理文章分类"
+
 
 @router.post("/", response_model=CategoryOut, status_code=status.HTTP_201_CREATED)
 async def create_category(
     data: CategoryCreate,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_superuser(CATEGORY_MANAGE_FORBIDDEN)),
 ):
     # 业务校验失败（ServiceError）由全局 handler 统一转 400
     return await CategoryService(session).create(data)
@@ -41,7 +43,7 @@ async def update_category(
     category_id: int,
     data: CategoryUpdate,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_superuser(CATEGORY_MANAGE_FORBIDDEN)),
 ):
     category = await CategoryService(session).update(category_id, data)
     if category is None:
@@ -53,7 +55,7 @@ async def update_category(
 async def delete_category(
     category_id: int,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_superuser(CATEGORY_MANAGE_FORBIDDEN)),
 ):
     service = CategoryService(session)
     if not await service.delete(category_id):

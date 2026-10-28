@@ -308,3 +308,140 @@ async def test_user_out_exposes_is_superuser(client, default_user, superadmin, a
     users = {u["id"]: u for u in resp.json()["user"]}
     assert users[default_user.id]["is_superuser"] is False
     assert users[superadmin.id]["is_superuser"] is True
+
+
+# ---------- 文章列表可见范围：普通用户只看自己的 ----------
+
+
+async def test_list_scoped_to_own_articles_for_normal_user(
+    client, session, default_user, superadmin, auth_headers, superadmin_headers
+):
+    """带 token 时普通用户列表只见自己文章；超管/匿名见全部"""
+    await _create_owned_article(session, default_user, "我的文章")
+    await _create_owned_article(session, superadmin, "超管的文章")
+
+    mine = (await client.get("/articles/", headers=auth_headers)).json()
+    assert mine["total"] == 1
+    assert mine["data"][0]["title"] == "我的文章"
+
+    all_articles = (await client.get("/articles/", headers=superadmin_headers)).json()
+    assert all_articles["total"] == 2
+
+    anonymous = (await client.get("/articles/")).json()
+    assert anonymous["total"] == 2
+
+
+async def test_normal_user_cannot_list_others_by_user_id(
+    client, session, default_user, superadmin, auth_headers
+):
+    """普通用户传他人 user_id 也强制收敛为自己（参数被忽略）"""
+    await _create_owned_article(session, superadmin, "超管的文章")
+    resp = await client.get(
+        f"/articles/?user_id={superadmin.id}", headers=auth_headers
+    )
+    assert resp.json()["total"] == 0
+
+
+async def test_list_with_invalid_token_returns_401(client):
+    """列表带非法 token → 401（不静默降级为匿名，避免权限收敛被绕过）"""
+    resp = await client.get(
+        "/articles/", headers={"Authorization": "Bearer bad.token"}
+    )
+    assert resp.status_code == 401
+
+
+async def test_trash_list_scoped_for_normal_user(
+    client, session, default_user, superadmin, auth_headers
+):
+    """回收站列表同样收敛：普通用户只看到自己的回收站文章"""
+    mine = await _create_owned_article(session, default_user, "我的待删")
+    other = await _create_owned_article(session, superadmin, "超管的待删")
+    service = ArticleService(session)
+    await service.delete(mine.slug)
+    await service.delete(other.slug)
+
+    trash = (
+        await client.get("/articles/?is_deleted=true", headers=auth_headers)
+    ).json()
+    assert trash["total"] == 1
+    assert trash["data"][0]["slug"] == mine.slug
+
+
+async def test_normal_user_still_manages_own_articles(
+    client, session, default_user, auth_headers
+):
+    """收敛后普通用户对自己的文章仍可改、可删、可恢复"""
+    article = await _create_owned_article(session, default_user, "可改可删")
+
+    patched = await client.patch(
+        f"/articles/{article.slug}", json={"title": "已改标题"}, headers=auth_headers
+    )
+    assert patched.status_code == 200
+
+    assert (
+        await client.delete(f"/articles/{article.slug}", headers=auth_headers)
+    ).status_code == 204
+
+    restored = await client.post(
+        f"/articles/{article.slug}/restore", headers=auth_headers
+    )
+    assert restored.status_code == 200
+    assert restored.json()["title"] == "已改标题"
+
+
+# ---------- 分类管理：仅超管 ----------
+
+
+async def test_normal_user_cannot_manage_categories(
+    client, session, default_user, auth_headers
+):
+    """普通用户创建/修改/删除分类 → 403"""
+    from app.dao import CategoryCrud
+
+    resp = await client.post(
+        "/categories/", json={"name": "新分类"}, headers=auth_headers
+    )
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "仅超级管理员可管理文章分类"
+
+    category = await CategoryCrud(session).create(name="已存在", parent_id=0, sort=0)
+
+    renamed = await client.patch(
+        f"/categories/{category.id}", json={"name": "改名"}, headers=auth_headers
+    )
+    assert renamed.status_code == 403
+
+    deleted = await client.delete(
+        f"/categories/{category.id}", headers=auth_headers
+    )
+    assert deleted.status_code == 403
+
+
+async def test_superadmin_can_manage_categories(client, superadmin_headers):
+    """超管可创建/修改/删除分类"""
+    created = await client.post(
+        "/categories/", json={"name": "超管分类"}, headers=superadmin_headers
+    )
+    assert created.status_code == 201
+    category_id = created.json()["id"]
+
+    renamed = await client.patch(
+        f"/categories/{category_id}", json={"name": "改名后"}, headers=superadmin_headers
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "改名后"
+
+    deleted = await client.delete(
+        f"/categories/{category_id}", headers=superadmin_headers
+    )
+    assert deleted.status_code == 204
+
+
+async def test_category_reads_stay_public(client, session):
+    """分类读接口保持公开（前台导航依赖）"""
+    from app.dao import CategoryCrud
+
+    await CategoryCrud(session).create(name="公开分类", parent_id=0, sort=0)
+    resp = await client.get("/categories/")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1

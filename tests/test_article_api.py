@@ -211,7 +211,7 @@ async def test_deleted_article_detail_does_not_count(client, session, auth_heade
     assert (await client.get(f"/articles/{out.slug}")).json()["view_count"] == 1
 
 
-async def test_batch_category_add_and_remove(client, session, auth_headers):
+async def test_batch_category_add_and_remove(client, session, superadmin_headers):
     """批量加入 → 按分类可见；批量移出 → 不可见；重复操作幂等"""
     from app.dao import CategoryCrud
 
@@ -222,26 +222,26 @@ async def test_batch_category_add_and_remove(client, session, auth_headers):
     b = await _create(session, title="批量B")
 
     batch = {"slugs": [a.slug, b.slug], "category_id": cat.id, "mode": "add"}
-    resp = await client.post("/articles/batch-category", json=batch, headers=auth_headers)
+    resp = await client.post("/articles/batch-category", json=batch, headers=superadmin_headers)
     assert resp.status_code == 200
     assert resp.json() == {"affected": 2}
     assert (await client.get(f"/articles/?category_id={cat.id}")).json()["total"] == 2
 
     # 幂等再加：关联不重复
-    resp2 = await client.post("/articles/batch-category", json=batch, headers=auth_headers)
+    resp2 = await client.post("/articles/batch-category", json=batch, headers=superadmin_headers)
     assert resp2.json()["affected"] == 2
     detail = (await client.get(f"/articles/{a.slug}")).json()
     assert [c["id"] for c in detail["categories"]] == [cat.id]
 
     batch["mode"] = "remove"
-    resp3 = await client.post("/articles/batch-category", json=batch, headers=auth_headers)
+    resp3 = await client.post("/articles/batch-category", json=batch, headers=superadmin_headers)
     assert resp3.json()["affected"] == 2
     assert (await client.get(f"/articles/?category_id={cat.id}")).json()["total"] == 0
     assert (await client.get(f"/articles/{a.slug}")).json()["categories"] == []
 
 
-async def test_batch_category_errors(client, session, auth_headers):
-    """401 未登录；400 一级分类/未知 slug；422 空 slugs 或非法 mode"""
+async def test_batch_category_errors(client, session, auth_headers, superadmin_headers):
+    """401 未登录；403 普通用户；400 一级分类/未知 slug；422 空 slugs 或非法 mode"""
     from app.dao import CategoryCrud
 
     cat_crud = CategoryCrud(session)
@@ -254,28 +254,33 @@ async def test_batch_category_errors(client, session, auth_headers):
         await client.post("/articles/batch-category", json=valid)
     ).status_code == 401
 
+    # 普通用户批量分类 → 403（属分类管理，仅超管可操作）
+    assert (
+        await client.post("/articles/batch-category", json=valid, headers=auth_headers)
+    ).status_code == 403
+
     level1 = {**valid, "category_id": top.id}
     assert (
-        await client.post("/articles/batch-category", json=level1, headers=auth_headers)
+        await client.post("/articles/batch-category", json=level1, headers=superadmin_headers)
     ).status_code == 400
 
     unknown = {**valid, "slugs": ["no-such-slug"]}
     assert (
-        await client.post("/articles/batch-category", json=unknown, headers=auth_headers)
+        await client.post("/articles/batch-category", json=unknown, headers=superadmin_headers)
     ).status_code == 400
 
     assert (
         await client.post(
             "/articles/batch-category",
             json={**valid, "slugs": []},
-            headers=auth_headers,
+            headers=superadmin_headers,
         )
     ).status_code == 422
     assert (
         await client.post(
             "/articles/batch-category",
             json={**valid, "mode": "replace"},
-            headers=auth_headers,
+            headers=superadmin_headers,
         )
     ).status_code == 422
 
