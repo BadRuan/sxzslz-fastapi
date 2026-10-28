@@ -26,18 +26,31 @@ class User(SQLModel, table=True):
     username: str = Field(unique=True, nullable=False)
     nickname: str = Field(unique=True, nullable=False)
     password: str = Field(nullable=False)
-    
+    # 超级管理员：可改任意文章（含作者/发布时间）、管理全部图片/文档；默认 False，存量用迁移脚本置 ruanfumin
+    is_superuser: bool = Field(default=False)
+
     articles: List['Article'] = Relationship(
         back_populates="user",
         sa_relationship_kwargs={
             "primaryjoin": "User.id == foreign(Article.user_id)"
         }
     )
-    
+
     @classmethod
-    def create_user(cls, username: str, nickname: str, password: str):
+    def create_user(
+        cls,
+        username: str,
+        nickname: str,
+        password: str,
+        is_superuser: bool = False,
+    ):
         hash = ph.hash(password)
-        return cls(username=username, nickname=nickname, password=hash)
+        return cls(
+            username=username,
+            nickname=nickname,
+            password=hash,
+            is_superuser=is_superuser,
+        )
 
     def check_password(self, plain_password: str) -> bool:
         try:

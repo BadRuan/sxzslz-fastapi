@@ -16,8 +16,8 @@
 | 时间字段 | `create_at` / `uploaded_at` 为 ISO 8601 **本地时间、无时区后缀**（如 `2026-09-24T11:22:01.682832`），按服务器时区理解（Docker 镜像固定 `Asia/Shanghai`） |
 | 分页 | 所有列表接口返回统一 `PageResponse`；`page` 超出范围时 `data` 为空数组，不报错 |
 | 跨域 | 浏览器联调时前端源必须包含在服务端 `CORS_ORIGINS`（逗号分隔），否则被 CORS 拦截 |
-| 上传大小 | 服务端强制限制：图片默认 **10MB**（`MAX_IMAGE_SIZE_MB`）、文档默认 **50MB**（`MAX_DOCUMENT_SIZE_MB`），超出返回 `400`；空文件返回 `400 文件内容为空` |
-| 鉴权方式 | 读接口（`GET`）公开；写操作（`POST` / `PATCH` / `DELETE`）需 `Authorization: Bearer <token>`，见[鉴权](#鉴权) |
+| 上传大小 | 服务端强制限制：图片默认 **10MB**（`MAX_IMAGE_SIZE_MB`）、文档默认 **50MB**（`MAX_DOCUMENT_SIZE_MB`），超出返回 `400`；空文件返回 `400 文件内容为空`。进度条与取消见 `docs/frontend-api.md` 的 `uploadWithProgress` |
+| 鉴权方式 | 文章/分类/图片本体等 **GET 公开**；图片列表、文档列表/下载、全部写操作需 `Authorization: Bearer <token>`。超管（`is_superuser`，默认账号 `ruanfumin`）可管理全部资源，见[角色权限](#角色权限) |
 
 ## 技术栈
 
@@ -82,7 +82,16 @@ uv run pytest tests/test_auth_api.py::test_login # 单个用例
 
 ## 鉴权
 
-读接口（`GET`）公开访问；写操作（`POST` / `PATCH` / `DELETE`）需要携带 JWT。
+文章 / 分类 / 图片本体（`GET /image/{slug}`）等前台接口公开；**图片列表、文档列表与下载、全部写操作**需要 JWT。
+
+### 角色权限
+
+| 角色 | 判定 | 能力 |
+|------|------|------|
+| 超级管理员 | `user.is_superuser = true`（默认账号 `ruanfumin`；存量库执行 `uv run python scripts/migrate_add_is_superuser.py`） | 任意文章可改/删/恢复，并可指定作者 `user_id` 与发布时间 `create_at`；可见/可改/可删全部图片与文档 |
+| 普通用户 | 其余账号 | 仅操作**自己**的文章与上传文件；列表只见自己上传的；`view_count` / `like_count` 不可 PATCH |
+
+前端可从 `/auth/me` 或 `/base/` 的 `user[].is_superuser` 判断角色，控制管理入口显隐。
 
 ### 1. 登录获取 token
 
@@ -137,7 +146,8 @@ Authorization: Bearer <access_token>
 {
   "id": 4,
   "slug": "a1b2c3d4e5f6",
-  "nickname": "其他"
+  "nickname": "其他",
+  "is_superuser": false
 }
 ```
 
@@ -164,11 +174,12 @@ Content-Type: application/json
 | 204 | 删除成功 | 空 body |
 | 400 | 业务校验失败 | `{"detail": "具体原因"}`（**字符串**） |
 | 401 | 未认证 / token 无效或过期 | `{"detail": "..."}`（**字符串**） |
+| 403 | 已登录但无权操作 | `{"detail": "..."}`（**字符串**） |
 | 404 | 资源不存在 | `{"detail": "..."}`（**字符串**） |
 | 422 | 请求参数格式非法 | `{"detail": [...]}`（**数组**，见下方示例） |
 | 500 | 服务器内部未预期异常 | `{"detail": "服务器内部错误"}`（**字符串**） |
 
-> 解析规则：`400` / `401` / `404` / `500` 的 `detail` 是字符串，可直接展示；`422` 的 `detail` 是数组，取 `detail[0].msg` 展示。
+> 解析规则：`400` / `401` / `403` / `404` / `500` 的 `detail` 是字符串，可直接展示；`422` 的 `detail` 是数组，取 `detail[0].msg` 展示。
 
 **401 的 `detail` 取值**（均带 `WWW-Authenticate: Bearer` 响应头）：
 
@@ -193,23 +204,30 @@ Content-Type: application/json
 }
 ```
 
-**常见 400 业务错误文案**（`detail` 全文如下，可按需映射提示）：
+**常见 400 / 403 业务错误文案**（`detail` 全文如下，可按需映射提示）：
 
-| detail | 触发场景 |
-|--------|----------|
-| 用户名或密码错误 | 登录失败 |
-| 原密码错误 | 修改密码时旧密码不匹配 |
-| 父分类不存在 | `parent_id` 指向的分类不存在 |
-| 仅支持二级分类，不能创建三级分类 | 在二级分类下再挂子分类 |
-| 一级分类不支持调整父级 | PATCH 给一级分类改 `parent_id` |
-| 仅支持二级分类，不能调整为一级分类 | PATCH 传 `parent_id=0` |
-| 父分类必须是一级分类 | 新父级本身是二级分类 |
-| 存在无效的分类 | `category_ids` 含不存在的分类 id |
-| 文章仅支持关联二级分类 | `category_ids` 含一级分类 id |
-| 字段 title 不能为空 | PATCH 非空字段显式传 `null`（字段名随实际而变） |
-| 仅支持 JPG, PNG, GIF, WebP 格式的图片 | 图片 `Content-Type` 不在白名单 |
-| 仅支持txt、pdf、doc、docx、xls、xlsx、ppt、pptx、zip格式的文件 | 文件 `Content-Type` 不在白名单 |
-| 上传失败 | 落盘异常 |
+| 状态码 | detail | 触发场景 |
+|--------|--------|----------|
+| 400 | 用户名或密码错误 | 登录失败 |
+| 400 | 原密码错误 | 修改密码时旧密码不匹配 |
+| 400 | 父分类不存在 | `parent_id` 指向的分类不存在 |
+| 400 | 仅支持二级分类，不能创建三级分类 | 在二级分类下再挂子分类 |
+| 400 | 一级分类不支持调整父级 | PATCH 给一级分类改 `parent_id` |
+| 400 | 仅支持二级分类，不能调整为一级分类 | PATCH 传 `parent_id=0` |
+| 400 | 父分类必须是一级分类 | 新父级本身是二级分类 |
+| 400 | 存在无效的分类 | `category_ids` 含不存在的分类 id |
+| 400 | 文章仅支持关联二级分类 | `category_ids` 含一级分类 id |
+| 400 | 字段 title 不能为空 | PATCH 非空字段显式传 `null`（字段名随实际而变） |
+| 400 | 图片大小超过限制（最大 10MB） | 图片超 `MAX_IMAGE_SIZE_MB` |
+| 400 | 文件大小超过限制（最大 50MB） | 文档超 `MAX_DOCUMENT_SIZE_MB` |
+| 400 | 文件内容为空 | 上传 0 字节文件 |
+| 400 | 服务器磁盘空间已满，请联系管理员清理后重试 | 落盘 ENOSPC |
+| 400 | `不支持的图片类型「…」，仅支持 JPG、PNG、GIF、WebP、BMP、TIFF、ICO 格式` | 图片 `Content-Type` 不在白名单 |
+| 400 | `不支持的文件类型「…」，仅支持 txt、csv、md、rtf、pdf、doc、docx、docm、xls、xlsx、xlsm、ppt、pptx、pptm、odt、ods、odp、zip、7z、rar、gz、tar、epub 格式` | 文档 `Content-Type` 不在白名单 |
+| 403 | 无权指定其他用户发布 | 普通用户创建文章传他人 `user_id` |
+| 403 | 无权修改他人文章 / 无权删除他人文章 / 无权恢复他人文章 | 文章写操作非作者且非超管 |
+| 403 | 无权限操作该文件 | 图片/文档改名或删除非本人且非超管 |
+| 403 | 无权限查看该文件 | 下载他人文档 |
 
 **404 的 `detail` 取值**：`分类不存在`、`文章不存在`、`Image not found`、`Document not found`。
 
@@ -229,21 +247,23 @@ Content-Type: application/json
 | PATCH | `/categories/{id}` | ✓ | 修改分类 | `CategoryOut` |
 | DELETE | `/categories/{id}` | ✓ | 删除分类（级联删除子分类） | 204 空 |
 | GET | `/articles/` | ✗ | 文章分页列表 | `PageResponse[ArticleOut]` |
-| POST | `/articles/` | ✓ | 创建文章 | `ArticleDetailOut` |
+| POST | `/articles/` | ✓ | 创建文章（超管可指定作者/时间） | `ArticleDetailOut` |
 | POST | `/articles/batch-category` | ✓ | 批量加入/移出分类 | `ArticleBatchCategoryOut` |
 | GET | `/articles/{slug}` | ✗ | 文章详情 | `ArticleDetailOut` |
 | POST | `/articles/{slug}/like` | ✗ | 匿名点赞（+1） | `ArticleLikeOut` |
-| PATCH | `/articles/{slug}` | ✓ | 修改文章 | `ArticleDetailOut` |
+| PATCH | `/articles/{slug}` | ✓ | 修改文章（作者或超管） | `ArticleDetailOut` |
 | DELETE | `/articles/{slug}` | ✓ | 删除文章（软删除 → 回收站） | 204 空 |
 | POST | `/articles/{slug}/restore` | ✓ | 恢复回收站文章 | `ArticleDetailOut` |
-| GET | `/image/` | ✗ | 图片分页列表 | `PageResponse[ImageOut]` |
-| POST | `/image/` | ✓ | 上传图片 | `UploadResult` |
-| GET | `/image/{slug}` | ✗ | 获取图片（默认预览图） | 二进制流 |
-| GET | `/document/` | ✗ | 文件分页列表 | `PageResponse[DocumentOut]` |
-| POST | `/document/` | ✓ | 上传文件 | `UploadResult` |
-| PATCH | `/document/{slug}` | ✓ | 改文件展示名（仅上传者） | `DocumentOut` |
-| DELETE | `/document/{slug}` | ✓ | 删除文件（仅上传者，清磁盘） | 204 空 |
-| GET | `/document/{slug}` | ✗ | 下载文件 | 二进制流 |
+| GET | `/image/` | ✓ | 图片分页列表（超管全部 / 普通仅自己） | `PageResponse[ImageOut]` |
+| POST | `/image/` | ✓ | 上传图片（支持进度+取消） | `UploadResult` |
+| GET | `/image/{slug}` | ✗ | 获取图片本体（默认预览图，公开） | 二进制流 |
+| PATCH | `/image/{slug}` | ✓ | 改图片展示名（本人或超管） | `ImageOut` |
+| DELETE | `/image/{slug}` | ✓ | 删除图片（本人或超管，清磁盘） | 204 空 |
+| GET | `/document/` | ✓ | 文件分页列表（超管全部 / 普通仅自己） | `PageResponse[DocumentOut]` |
+| POST | `/document/` | ✓ | 上传文件（支持进度+取消） | `UploadResult` |
+| PATCH | `/document/{slug}` | ✓ | 改文件展示名（本人或超管） | `DocumentOut` |
+| DELETE | `/document/{slug}` | ✓ | 删除文件（本人或超管，清磁盘） | 204 空 |
+| GET | `/document/{slug}` | ✓ | 下载文件（本人或超管） | 二进制流 |
 
 > 响应模型与[数据模型](#数据模型)章节一一对应；标 ✓ 的接口需携带 `Authorization: Bearer <token>`。
 
@@ -294,7 +314,7 @@ Content-Type: application/json
     }
   ],
   "user": [
-    {"id": 1, "slug": "zhongxinzhan", "nickname": "芜湖市鸠江区沈巷镇水利站"}
+    {"id": 1, "slug": "zhongxinzhan", "nickname": "芜湖市鸠江区沈巷镇水利站", "is_superuser": false}
   ]
 }
 ```
@@ -414,11 +434,13 @@ Content-Type: application/json
       "create_at": "2026-09-24T11:22:01.682832",
       "view_count": 1,
       "like_count": 0,
+      "user_id": 20,
       "categories": [],
       "user": {
         "id": 20,
         "slug": "jjqczj",
-        "nickname": "芜湖市鸠江区财政局"
+        "nickname": "芜湖市鸠江区财政局",
+        "is_superuser": false
       }
     }
   ],
@@ -452,13 +474,14 @@ Content-Type: application/json
 | cover_img_slug | string | ✗ | null | 封面图 slug（来自图片上传接口的返回） |
 | is_recommended | bool | ✗ | false | 是否推荐 |
 | category_ids | int[] | ✗ | [] | 关联**二级分类** ID 列表（可多个；一级分类或不存在的 id 返回 400） |
-| user_id | int | ✗ | 当前登录用户 | **发布主体**（文章归属用户 id）；≥1，非法值 422。不传则归属 JWT 当前用户 |
+| user_id | int | ✗ | 当前登录用户 | **仅超管**：指定发布主体；普通用户传他人 → `403 无权指定其他用户发布` |
+| create_at | datetime | ✗ | 服务器当前时间 | **仅超管**：指定发布时间；普通用户传入被忽略 |
 
-> 默认作者为当前登录用户（取自 JWT）；多账号/代发场景可传 `user_id` 指定发布主体。`DEFAULT_USER_ID` 仅作为不走 API 直接调用 service 时的兜底默认。
+> 默认作者为当前登录用户（取自 JWT）。`DEFAULT_USER_ID` 仅作为不走 API 直接调用 service 时的兜底默认。
 
 **响应** `201`：`ArticleDetailOut`（含 `content`）
 
-**失败**：`400` 分类无效；`422` 缺 `title` 或类型不符
+**失败**：`400` 分类无效；`403` 普通用户指定他人为作者；`422` 缺 `title` 或类型不符
 
 ### GET `/articles/{slug}`
 
@@ -489,6 +512,8 @@ Content-Type: application/json
 
 ### PATCH `/articles/{slug}`
 
+**权限**：作者本人或超管；他人 → `403 无权修改他人文章`。
+
 **请求体**（所有字段可选，只更新传入的字段）：
 
 ```json
@@ -502,9 +527,11 @@ Content-Type: application/json
 **null 的语义**：
 
 - 可空字段（`content` / `cover_img_slug` / `category_ids`）显式传 `null` 表示**清空**
-- 非空字段（`title` / `is_recommended`）传 `null` 返回 `400`
+- 非空字段（`title` / `is_recommended` / `user_id` / `create_at`）传 `null` 返回 `400`
 - `category_ids` 传入时**整体替换**关联分类
 - `is_deleted` 不走 PATCH：删除用 `DELETE`，恢复用 `POST /articles/{slug}/restore`
+
+**超管专属**（普通用户请求中出现会被忽略）：`user_id` 改作者、`create_at` 改发布时间。`view_count` / `like_count` 对所有人不可 PATCH。
 
 **响应** `200`：`ArticleDetailOut`
 
@@ -572,7 +599,7 @@ Content-Type: application/json
 
 上传图片，表单字段名为 `file`。**需携带 token**（未登录返回 `401`）。
 
-支持格式：JPG / PNG / GIF / WebP。上传后服务端自动生成 WebP 预览图，PNG / GIF 的**透明背景会保留**（不透明格式输出无 alpha 通道的 WebP）。
+**支持格式**：JPG、PNG、GIF、WebP、BMP、TIFF、ICO（按 `Content-Type` 白名单，PIL 均可生成 WebP 预览）。上传后自动生成 WebP 预览图，PNG / GIF 的**透明背景会保留**。
 
 **请求**（`multipart/form-data`）：
 
@@ -583,7 +610,7 @@ file: <二进制图片>
 - 服务端按该 part 的 `Content-Type` 做白名单校验；浏览器上传时请确保 `File.type` 非空（如 `.png` → `image/png`），为空会返回 `400`。
 - 返回的 `slug` **保留原始扩展名**（如 `5894e8c2bc824d0abd7ed539115cb6b9.png`），可直接用于文章的 `cover_img_slug`。
 - 默认大小上限 **10MB**（`MAX_IMAGE_SIZE_MB`），超出或空文件返回 `400`。
-- 前端上传进度用 `XMLHttpRequest` 的 `upload.onprogress`（`fetch` 无法直接拿上传进度），详见 `docs/frontend-api.md`。
+- **进度 + 取消**：用 `XMLHttpRequest.upload.onprogress` + `AbortController`，完整封装见 `docs/frontend-api.md` 的 `uploadWithProgress`（图片/文档共用）；中途取消服务端会清理半成品。
 
 **响应** `200`：
 
@@ -600,11 +627,11 @@ file: <二进制图片>
 
 > `url` 为预览图相对地址，`raw_url` 为原图地址；前端拼 `BASE` 后可直接 `<img src>`。
 
-**失败**：`400` 格式不支持 / 超过大小限制 / 空文件 / 上传失败
+**失败**：`400` 见 `docs/frontend-api.md` 上传失败详情表；`401` 未登录。
 
 ### GET `/image/`
 
-分页获取已上传图片列表。按 `id` 倒序（最新上传在前）。
+**需登录**。分页获取已上传图片列表。按 `id` 倒序（最新上传在前）。**超管见全部；普通用户只见自己上传的**。
 
 **查询参数**：
 
@@ -630,7 +657,8 @@ file: <二进制图片>
       "user": {
         "id": 20,
         "slug": "jjqczj",
-        "nickname": "芜湖市鸠江区财政局"
+        "nickname": "芜湖市鸠江区财政局",
+        "is_superuser": false
       }
     }
   ],
@@ -645,7 +673,7 @@ file: <二进制图片>
 
 ### GET `/image/{slug}`
 
-获取图片文件本体（浏览器可直接打开）。每次成功访问自增浏览量（列表中的 `view` 字段）。
+**公开**（文章封面等前台依赖此接口，不限制上传者）。获取图片文件本体。每次成功访问自增浏览量（列表中的 `view` 字段）。
 
 **查询参数**：
 
@@ -659,7 +687,17 @@ file: <二进制图片>
 
 **失败**：`404` 图片记录不存在
 
-> 图片模块暂无删除接口。
+### PATCH `/image/{slug}`
+
+仅**上传者本人或超管**可改展示名。请求体 `{"raw_filename": "新名字.png"}`（1~255 字符）。
+
+**响应** `200`：`ImageOut`。**失败**：`401`；`403 无权限操作该文件`；`404`；`422`。
+
+### DELETE `/image/{slug}`
+
+仅**上传者本人或超管**可删：DB 记录 + 原图 + WebP 预览图一并清理（硬删，不可恢复）。
+
+**响应** `204` 空。**失败**：`401`；`403`；`404`。
 
 ---
 
@@ -669,7 +707,7 @@ file: <二进制图片>
 
 上传文档，表单字段名为 `file`。**需携带 token**（未登录返回 `401`）。
 
-支持格式：txt / pdf / doc / docx / xls / xlsx / ppt / pptx / zip。
+**支持格式**：txt、csv、md、rtf、pdf、doc/docx/docm、xls/xlsx/xlsm、ppt/pptx/pptm、odt/ods/odp、zip/7z/rar/gz/tar、epub（完整 MIME 表见 `docs/frontend-api.md`）。
 
 **请求**（`multipart/form-data`）：
 
@@ -678,9 +716,9 @@ file: <二进制文件>
 ```
 
 - 与图片上传一致：按 part 的 `Content-Type` 白名单校验，浏览器端请确保 `File.type` 非空。
-- 返回的 `slug` 保留原始扩展名，可用于下载链接 `GET /document/{slug}`。
+- 返回的 `slug` 保留原始扩展名，可用于下载链接 `GET /document/{slug}`（需带 token）。
 - 默认大小上限 **50MB**（`MAX_DOCUMENT_SIZE_MB`），超出或空文件返回 `400`。
-- 上传进度与图片相同，用 `XMLHttpRequest` + `upload.onprogress`。
+- **进度 + 取消**：与图片共用 `uploadWithProgress`（见 `docs/frontend-api.md`），支持 `AbortController` 中途取消。
 
 **响应** `200`：
 
@@ -701,7 +739,7 @@ file: <二进制文件>
 
 ### GET `/document/`
 
-分页获取已上传文件列表。
+**需登录**。分页获取已上传文件列表。**超管见全部；普通用户只见自己上传的**。
 
 **查询参数**：同图片列表（`page` 默认 1、`page_size` 默认 30，1 ~ 100），另支持 `sort` 排序字段（均倒序，非法值 422）：
 
@@ -727,7 +765,8 @@ file: <二进制文件>
       "user": {
         "id": 20,
         "slug": "jjqczj",
-        "nickname": "芜湖市鸠江区财政局"
+        "nickname": "芜湖市鸠江区财政局",
+        "is_superuser": false
       }
     }
   ],
@@ -740,15 +779,17 @@ file: <二进制文件>
 
 ### GET `/document/{slug}`
 
-下载文件（带原始文件名）。每次成功访问自增浏览量（列表中的 `view` 字段）。
+**需登录**。下载文件（带原始文件名）。每次成功访问自增浏览量（列表中的 `view` 字段）。
+
+**权限**：上传者本人或超管；他人 → `403 无权限查看该文件`。`window.open` 无法带自定义头时用 `fetch` + `Authorization` 转 blob。
 
 **响应**：文件二进制流（`Content-Disposition: attachment`，`Content-Type` 为上传时的 MIME 类型）
 
-**失败**：`404` 文件记录不存在
+**失败**：`401`；`403 无权限查看该文件`；`404` 文件记录不存在
 
 ### PATCH `/document/{slug}`
 
-仅**上传者本人**可改展示名（下载时 `Content-Disposition` 的文件名）。不替换文件内容，`slug` 不变。**需携带 token**。
+仅**上传者本人或超管**可改展示名（下载时 `Content-Disposition` 的文件名）。不替换文件内容，`slug` 不变。**需携带 token**。
 
 **请求**：
 
@@ -756,13 +797,13 @@ file: <二进制文件>
 {"raw_filename": "2026年审计报告（修订）.pdf"}
 ```
 
-**响应** `200`：`DocumentOut`。**失败**：`401` 未登录；`403 无权限操作该文件` 非上传者；`404` 不存在；`422` 名为空。
+**响应** `200`：`DocumentOut`。**失败**：`401` 未登录；`403 无权限操作该文件` 非上传者且非超管；`404` 不存在；`422` 名为空。
 
 ### DELETE `/document/{slug}`
 
-仅**上传者本人**可删：DB 记录 + 磁盘文件一并清理（硬删，不可恢复）。**需携带 token**。
+仅**上传者本人或超管**可删：DB 记录 + 磁盘文件一并清理（硬删，不可恢复）。**需携带 token**。
 
-**响应** `204` 空。**失败**：`401` 未登录；`403 无权限操作该文件` 非上传者；`404` 不存在。
+**响应** `204` 空。**失败**：`401` 未登录；`403 无权限操作该文件`；`404` 不存在。
 
 ---
 
@@ -786,6 +827,7 @@ file: <二进制文件>
 | id | int | 主键 |
 | slug | string | URL 唯一标识 |
 | nickname | string | 昵称（展示名） |
+| is_superuser | bool | 是否超管（默认账号 `ruanfumin` 为 `true`；前端可据此控制管理入口） |
 
 ### BaseInfoOut
 
@@ -818,9 +860,10 @@ file: <二进制文件>
 | content | string \| null | 正文（**仅详情 / 创建 / 修改响应返回**，列表不含） |
 | is_deleted | bool | 是否在回收站（`false` 才会出现在正常列表；列表接口已按 `is_deleted` 过滤） |
 | is_recommended | bool | 是否推荐 |
-| create_at | datetime | 创建时间 |
-| view_count | int | 阅读量（每次公开详情访问 `GET /articles/{slug}` 自增 +1） |
-| like_count | int | 点赞数（通过 `POST /articles/{slug}/like` 自增） |
+| create_at | datetime | 发布时间（超管可 PATCH 修改） |
+| view_count | int | 阅读量（每次公开详情访问 `GET /articles/{slug}` 自增 +1；**不可** PATCH） |
+| like_count | int | 点赞数（通过 `POST /articles/{slug}/like` 自增；**不可** PATCH） |
+| user_id | int | 作者用户 id（超管可 PATCH 改归属） |
 | categories | CategoryTree[] | 关联分类（二级分类，可为空数组） |
 | user | UserOut \| null | 作者，可能为 `null` |
 
@@ -851,7 +894,7 @@ file: <二进制文件>
 | user_id | int | 上传者用户 id（**必填、无默认**，上传接口自动写入当前用户；存量数据已迁移为 1） |
 | view | int | 浏览量（每次成功 GET 自增） |
 | uploaded_at | datetime | 上传时间 |
-| user | UserOut \| null | 上传者 `{id, slug, nickname}`；对应用户不存在时为 null |
+| user | UserOut \| null | 上传者 `{id, slug, nickname, is_superuser}`；对应用户不存在时为 null |
 
 ### PageResponse
 

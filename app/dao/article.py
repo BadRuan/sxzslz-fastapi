@@ -1,4 +1,5 @@
 from typing import List, Literal, Optional, Tuple
+from datetime import datetime
 from sqlalchemy import delete as sa_delete, exists, insert as sa_insert
 from sqlalchemy.orm import selectinload
 from sqlmodel import select, func, desc, update
@@ -86,14 +87,19 @@ class ArticleCrud:
         is_recommended: bool,
         user_id: int,
         category_ids: List[int],
+        create_at: Optional[datetime] = None,
     ) -> Article:
-        article = Article(
+        article_kwargs: dict = dict(
             title=title,
             content=content,
             cover_img_slug=cover_img_slug,
             is_recommended=is_recommended,
             user_id=user_id,
         )
+        # 超管指定发布时间；否则走模型 default_factory
+        if create_at is not None:
+            article_kwargs["create_at"] = create_at
+        article = Article(**article_kwargs)  # type: ignore[arg-type]
         article.categories = await self._resolve_categories(category_ids)
         self.session.add(article)
         await self.session.flush()

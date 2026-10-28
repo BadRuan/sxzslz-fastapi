@@ -37,8 +37,15 @@
 
 ### 鉴权总览
 
-- **读接口（GET）全部公开**，无需 token。
-- **写操作需登录**：分类/文章的 `POST` / `PATCH` / `DELETE`、图片/文件的 `POST` 上传、文件的 `PATCH` / `DELETE`、修改密码。
+- **角色**：`is_superuser=true` 为**超级管理员**（默认账号 `ruanfumin`），其余均为普通用户。登录后从 `/auth/me` 或 `/base/` 的 `user[].is_superuser` 判断。
+- **公开 GET**：文章列表/详情、图片本体 `GET /image/{slug}`、分类、`/base/`。
+- **需登录 GET**：图片列表 `GET /image/`、文件列表 `GET /document/`、文件下载 `GET /document/{slug}`。
+- **写操作需登录**：分类/文章的 `POST` / `PATCH` / `DELETE`、图片/文件的 `POST` 上传、文件/图片的 `PATCH` / `DELETE`、修改密码。
+- **权限边界（摘要）**：
+  - 文章：普通用户只能改/删/恢复**自己**的；超管可改任意，并可指定 `user_id`（作者）与 `create_at`（发布时间）。`view_count` / `like_count` 对所有人均不可 PATCH。
+  - 图片/文档列表：普通用户只见**自己上传的**；超管见全部。
+  - 文档下载：本人或超管；图片本体公开（文章封面依赖）。
+  - 文档/图片改名与删除：本人或超管。
 - 匿名例外：`POST /articles/{slug}/like`（点赞）无需 token。
 
 ---
@@ -159,6 +166,7 @@ token 过期时间为服务端配置（默认 12 小时），过期后写接口�
 |--------|------|-------------|
 | 400 | 业务校验失败 | **字符串**，可直接 toast |
 | 401 | 未认证 / token 无效或过期 | **字符串**（带 `WWW-Authenticate: Bearer` 响应头） |
+| 403 | 已登录但无权操作（改他人文章/文件等） | **字符串** |
 | 404 | 资源不存在 | **字符串** |
 | 422 | 请求参数格式非法 | **数组**，取 `detail[0].msg` 展示 |
 | 500 | 服务器内部未预期异常 | **字符串**（固定 `服务器内部错误`） |
@@ -197,6 +205,16 @@ function showError(res) {
 | `无效或过期的令牌` | token 被篡改或已过期 |
 | `用户不存在` | token 合法但对应用户已被删除 |
 
+### 403 的 detail 取值（权限）
+
+| detail | 场景 |
+|--------|------|
+| `无权指定其他用户发布` | 普通用户创建文章时传他人的 `user_id` |
+| `无权修改他人文章` | PATCH 非自己且非超管的文章 |
+| `无权删除他人文章` / `无权恢复他人文章` | DELETE / restore 同上 |
+| `无权限操作该文件` | 图片/文档改名或删除非本人且非超管 |
+| `无权限查看该文件` | 下载他人文档 |
+
 ### 常见 400 业务错误文案
 
 | detail | 触发场景 |
@@ -212,8 +230,8 @@ function showError(res) {
 | `文章仅支持关联二级分类` | `category_ids` 含一级分类 id |
 | `字段 title 不能为空` | PATCH 非空字段显式传 `null`（字段名随实际而变） |
 | `文章不存在或已删除: xxx` | 批量分类时 slug 不存在（整批不生效） |
-| `不支持的图片类型「{实际Content-Type}」，仅支持 JPG、PNG、GIF、WebP 格式` | 图片 `Content-Type` 不在白名单（`{}` 内为服务端实际收到的 MIME，为空显示 `未知`） |
-| `不支持的文件类型「{实际Content-Type}」，仅支持 txt、pdf、doc、docx、xls、xlsx、ppt、pptx、zip 格式` | 文档 `Content-Type` 不在白名单 |
+| `不支持的图片类型「{实际Content-Type}」，仅支持 JPG、PNG、GIF、WebP、BMP、TIFF、ICO 格式` | 图片 `Content-Type` 不在白名单（`{}` 内为服务端实际收到的 MIME，为空显示 `未知`） |
+| `不支持的文件类型「{实际Content-Type}」，仅支持 txt、csv、md、rtf、pdf、doc、docx、docm、xls、xlsx、xlsm、ppt、pptx、pptm、odt、ods、odp、zip、7z、rar、gz、tar、epub 格式` | 文档 `Content-Type` 不在白名单 |
 | `图片大小超过限制（最大 10MB）` | 图片超过 `MAX_IMAGE_SIZE_MB` |
 | `文件大小超过限制（最大 50MB）` | 文档超过 `MAX_DOCUMENT_SIZE_MB` |
 | `文件内容为空` | 上传 0 字节文件 |
@@ -435,8 +453,7 @@ function showError(res) {
   "content": "正文内容……",
   "cover_img_slug": "0bee5133169c4e888c147aba8864fa14.png",
   "is_recommended": true,
-  "category_ids": [2],
-  "user_id": 1
+  "category_ids": [2]
 }
 ```
 
@@ -447,13 +464,12 @@ function showError(res) {
 | cover_img_slug | string | ✗ | null | 封面图 slug（来自 `POST /image/` 返回） |
 | is_recommended | bool | ✗ | false | 是否推荐 |
 | category_ids | int[] | ✗ | [] | **二级分类** id 列表；含一级分类或不存在的 id → 400 |
-| user_id | int | ✗ | 当前登录用户 | **发布主体**（文章归属用户 id，来自 `/base/` 用户列表）；≥1，非法值 422。不传则归属 JWT 当前用户 |
-
-> 代发/多账号场景：登录任意有权限的账号后，传 `user_id` 指定文章归属；响应里的 `user` 即该主体。
+| user_id | int | ✗ | 当前登录用户 | **仅超管**：指定发布主体；普通用户传他人 → `403 无权指定其他用户发布` |
+| create_at | datetime | ✗ | 服务器当前时间 | **仅超管**：指定发布时间（ISO 8601，如 `2019-12-31T23:59:59`）；普通用户传入被忽略 |
 
 **成功** `201`：`ArticleDetailOut`（比列表多 `content` 字段，结构见 [10. 通用数据结构](#10-通用数据结构)）。
 
-**失败**：`400` 分类无效；`422` 缺 `title`。
+**失败**：`400` 分类无效；`403` 普通用户指定他人为作者；`422` 缺 `title`。
 
 ### GET `/articles/{slug}`
 
@@ -473,13 +489,15 @@ function showError(res) {
   "create_at": "2026-10-27T13:01:37.520947",
   "view_count": 1,
   "like_count": 0,
+  "user_id": 1,
   "categories": [
     {"id": 2, "name": "泵站托管", "sort": 0, "children": []}
   ],
   "user": {
     "id": 1,
     "slug": "5ab74e52a00a",
-    "nickname": "管理员"
+    "nickname": "管理员",
+    "is_superuser": true
   }
 }
 ```
@@ -490,6 +508,8 @@ function showError(res) {
 
 ### PATCH `/articles/{slug}`（需登录）
 
+**权限**：作者本人，或超管。他人 → `403 无权修改他人文章`。
+
 只更新传入字段：
 
 ```json
@@ -499,11 +519,20 @@ function showError(res) {
 **null 语义**（重要）：
 
 - 可空字段（`content` / `cover_img_slug` / `category_ids`）显式传 `null` 表示**清空**
-- 非空字段（`title` / `is_recommended`）传 `null` → `400`
+- 非空字段（`title` / `is_recommended` / `user_id` / `create_at`）传 `null` → `400`
 - `category_ids` 传入时**整体替换**关联分类（不是合并）
 - 删除/恢复不走 PATCH：见下方 `DELETE` 与 `restore`
 
-**成功** `200`：`ArticleDetailOut`。**失败**：`400` / `404`。
+**超管专属字段**（普通用户请求中出现会被**忽略**，不影响正文类字段生效）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| user_id | int | 改发布作者（≥1） |
+| create_at | datetime | 改发布时间 |
+
+**对所有人**：`view_count` / `like_count` **不可**通过 PATCH 修改（浏览量走详情访问自增，点赞走 like 接口）。
+
+**成功** `200`：`ArticleDetailOut`。**失败**：`400` / `403` / `404`。
 
 ### POST `/articles/{slug}/like`
 
@@ -521,13 +550,17 @@ function showError(res) {
 
 软删除：移入回收站（`is_deleted = true`），前台列表/详情一律 `404`。
 
-**成功** `204` 空 body；**失败** `404`。
+**权限**：作者本人，或超管。他人 → `403 无权删除他人文章`。
+
+**成功** `204` 空 body；**失败** `403` / `404`。
 
 ### POST `/articles/{slug}/restore`（需登录）
 
 恢复回收站文章，重新出现在正常列表。对未删除文章调用是**幂等空操作**。
 
-**成功** `200`：`ArticleDetailOut`。**失败**：`401`；`404`。
+**权限**：作者本人，或超管。他人 → `403 无权恢复他人文章`。
+
+**成功** `200`：`ArticleDetailOut`。**失败**：`401`；`403`；`404`。
 
 ### POST `/articles/batch-category`（需登录）
 
@@ -576,7 +609,21 @@ const list = await get("/articles/");
 
 ### POST `/image/`（需登录）
 
-上传图片，`multipart/form-data`，字段名 `file`。支持 JPG / PNG / GIF / WebP。服务端自动生成 WebP 预览图（透明背景保留）。
+上传图片，`multipart/form-data`，字段名 `file`。服务端自动生成 WebP 预览图（透明背景保留）。
+
+**支持格式**（按 part 的 `Content-Type` 白名单，PIL 均可解码出预览）：
+
+| 扩展名 | MIME |
+|--------|------|
+| `.jpg` `.jpeg` | `image/jpeg` |
+| `.png` | `image/png` |
+| `.gif` | `image/gif` |
+| `.webp` | `image/webp` |
+| `.bmp` | `image/bmp` / `image/x-ms-bmp` |
+| `.tif` `.tiff` | `image/tiff` |
+| `.ico` | `image/x-icon` / `image/vnd.microsoft.icon` |
+
+> 不在白名单（如 `image/heic`、`image/svg+xml`、`image/avif`）→ `400 不支持的图片类型「…」`。HEIC / AVIF / SVG 需额外解码插件，当前未放开。
 
 **大小限制**：默认 **10MB**（服务端环境变量 `MAX_IMAGE_SIZE_MB` 可调）。超出 → `400 图片大小超过限制（最大 10MB）`；空文件 → `400 文件内容为空`；内容损坏 → `400 不是有效的图片文件（内容可能已损坏或格式不符）`。
 
@@ -584,7 +631,7 @@ const list = await get("/articles/");
 
 | detail | 场景 |
 |--------|------|
-| `不支持的图片类型「…」，仅支持 JPG、PNG、GIF、WebP 格式` | `Content-Type` 不在白名单（含实际收到的 MIME） |
+| `不支持的图片类型「…」，仅支持 JPG、PNG、GIF、WebP、BMP、TIFF、ICO 格式` | `Content-Type` 不在白名单（含实际收到的 MIME） |
 | `图片大小超过限制（最大 10MB）` | 超过 `MAX_IMAGE_SIZE_MB` |
 | `文件内容为空` | 0 字节文件 |
 | `不是有效的图片文件（内容可能已损坏或格式不符）` | MIME 合法但 PIL 无法解码 |
@@ -595,36 +642,137 @@ const list = await get("/articles/");
 
 > 上述失败均**不会**在磁盘留下半成品、不会写入数据库。
 
-**上传进度（前端）**：进度条用 `XMLHttpRequest` 的 `upload.onprogress`（`fetch` 无法直接拿上传进度）：
+**上传进度（前端）**：图片与文档**共用**同一套进度封装。浏览器原生只有 `XMLHttpRequest.upload.onprogress` 能拿到已发送字节（`fetch` 不行）。服务端为分块流式落盘，不会整文件进内存；进度条反映的是**客户端已发出的字节**，到 100% 后图片还要生成 WebP 预览、文档还要写库，需等 Promise resolve 才算完成。
 
 ```js
-function uploadWithProgress(url, file, token, onProgress) {
+/**
+ * 带进度 + 可取消的上传（图片 / 文档通用）
+ * @param {string} url          `${BASE}/image/` 或 `${BASE}/document/`
+ * @param {File}   file         <input type="file"> 的 File
+ * @param {string} token        JWT
+ * @param {object} [opts]
+ * @param {(p: {ratio:number, loaded:number, total:number}) => void} [opts.onProgress]
+ *        ratio ∈ [0,1]；发送完毕后服务端处理期间不会再来进度事件
+ * @param {AbortSignal} [opts.signal] 取消上传（调用 signal.abort()）
+ * @returns {Promise<object>}   成功时为 UploadResult JSON
+ */
+function uploadWithProgress(url, file, token, { onProgress, signal } = {}) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", url);
     xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-    // 不要手动设置 Content-Type，浏览器自动带 boundary
+    // 切勿手动 set Content-Type —— multipart boundary 必须由浏览器生成
+
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(e.loaded / e.total); // 0~1
+      if (onProgress && e.lengthComputable) {
+        onProgress({ ratio: e.loaded / e.total, loaded: e.loaded, total: e.total });
+      }
     };
+
     xhr.onload = () => {
-      const body = JSON.parse(xhr.responseText);
-      if (xhr.status >= 200 && xhr.status < 300) resolve(body);
-      else reject(new Error(typeof body.detail === "string" ? body.detail : "上传失败"));
+      let body = null;
+      try {
+        body = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+      } catch {
+        /* 非 JSON 响应忽略 */
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(body);
+        return;
+      }
+      const detail = body && body.detail;
+      let message = `上传失败（HTTP ${xhr.status}）`;
+      if (typeof detail === "string") message = detail;
+      else if (Array.isArray(detail) && detail[0]) message = detail[0].msg || message;
+      const err = new Error(message);
+      err.status = xhr.status;
+      err.detail = detail;
+      reject(err);
     };
-    xhr.onerror = () => reject(new Error("网络错误"));
+    xhr.onerror = () => reject(new Error("网络错误，上传失败"));
+    xhr.onabort = () => {
+      const err = new Error("上传已取消");
+      err.name = "AbortError";
+      reject(err);
+    };
+    if (signal) {
+      if (signal.aborted) {
+        xhr.abort();
+        return;
+      }
+      signal.addEventListener("abort", () => xhr.abort(), { once: true });
+    }
+
     const form = new FormData();
-    form.append("file", file); // <input type="file"> 的 File 对象
+    form.append("file", file); // 字段名固定为 file
     xhr.send(form);
   });
 }
-
-// 用法
-const result = await uploadWithProgress(`${BASE}/image/`, file, token, (p) => {
-  el.value = p; // <progress> 或自绘进度条
-});
-// result.url / result.raw_url 可直接拼 <img src>
 ```
+
+**图片上传示例（含一键取消）**：
+
+```html
+<input type="file" id="imgInput" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp,image/tiff" />
+<progress id="imgProgress" max="1" value="0" hidden></progress>
+<button id="imgCancel" type="button" hidden>取消上传</button>
+```
+
+```js
+let imgController = null;
+
+async function uploadImageOnce(file, token) {
+  // 任何时刻（包括进度未到 100%）都可取消
+  imgController = new AbortController();
+  cancelBtn.hidden = false;
+  progressEl.hidden = false;
+  progressEl.value = 0;
+  const onAbortClick = () => imgController.abort(); // 一键取消：断开连接，服务端清半成品
+  cancelBtn.onclick = onAbortClick;
+
+  try {
+    setUiState("uploading");
+    const result = await uploadWithProgress(`${BASE}/image/`, file, token, {
+      onProgress: ({ ratio }) => (progressEl.value = ratio),
+      signal: imgController.signal,
+    });
+    setUiState("processing"); // 已发完，服务端生成 WebP 预览中
+    // result.url / result.raw_url 可直接拼 <img src>
+    setUiState("done");
+  } catch (err) {
+    if (err.name === "AbortError") setUiState("cancelled");
+    else showToast(err.message);
+  } finally {
+    cancelBtn.hidden = true;
+    imgController = null;
+  }
+}
+```
+
+**文档上传示例**（同一函数，换 URL）：
+
+```js
+const controller = new AbortController();
+cancelBtn.onclick = () => controller.abort(); // 进度未到 100% 也可随时取消
+
+try {
+  const result = await uploadWithProgress(`${BASE}/document/`, docFile, token, {
+    onProgress: ({ ratio, loaded, total }) => {
+      progressEl.value = ratio;
+      sizeLabel.textContent = `${formatBytes(loaded)} / ${formatBytes(total)}`;
+    },
+    signal: controller.signal,
+  });
+  // result.url 为下载地址（需带 Authorization，见文件模块）
+} catch (err) {
+  if (err.name === "AbortError") console.info("已取消");
+  else showToast(err.message);
+}
+```
+
+> **取消语义**：`xhr.abort()` 会立刻断开 HTTP 连接；服务端 `write_upload_stream` 捕获 `ClientDisconnect` 后删除已写入的半成品，**不会**入库、不会在 `uploads/` 残留。取消在 0%~100% 任意时刻生效。
+
+> 前端选择文件后建议先 `file.size` 与允许上限比对（图片 10MB / 文档 50MB），不合法直接提示，避免白传。
 
 > 浏览器上传时确保 `File.type` 非空（如 `.png` → `image/png`），为空会返回 `400`。
 
@@ -654,9 +802,11 @@ const result = await uploadWithProgress(`${BASE}/image/`, file, token, (p) => {
 
 **失败**：`400` 见上方失败详情表；`401` 未登录。
 
-### GET `/image/`
+### GET `/image/`（需登录）
 
-公开。分页列表，按 `id` 倒序（最新上传在前）。**含上传者信息**。
+分页列表，按 `id` 倒序（最新上传在前）。**含上传者信息**。
+
+**可见范围**：超管看到**全部**；普通用户只看到**自己上传的**。
 
 **查询参数**：`page`（默认 1）、`page_size`（默认 30，1~100）。
 
@@ -677,7 +827,8 @@ const result = await uploadWithProgress(`${BASE}/image/`, file, token, (p) => {
       "user": {
         "id": 1,
         "slug": "5ab74e52a00a",
-        "nickname": "管理员"
+        "nickname": "管理员",
+        "is_superuser": true
       }
     }
   ],
@@ -690,9 +841,11 @@ const result = await uploadWithProgress(`${BASE}/image/`, file, token, (p) => {
 
 > `user` 为上传者（业务层关联）；对应用户不存在时为 `null`。
 
+**失败**：`401` 未登录。
+
 ### GET `/image/{slug}`
 
-公开。返回图片文件本体（浏览器可直接打开）。**每次成功访问 `view` +1**。
+**公开**（文章封面等前台场景依赖，不限制上传者）。返回图片文件本体（浏览器可直接打开）。**每次成功访问 `view` +1**。
 
 **查询参数**：`file_type`，默认 `preview`。
 
@@ -705,7 +858,27 @@ const result = await uploadWithProgress(`${BASE}/image/`, file, token, (p) => {
 
 **失败**：`404 Image not found`。
 
-> 图片模块暂无删除接口。
+### PATCH `/image/{slug}`（需登录）
+
+仅**上传者本人或超管**可改展示名。**不替换文件内容**。
+
+**请求体**：
+
+```json
+{"raw_filename": "新图片名.png"}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| raw_filename | string | ✓ | 1~255 字符，空串 422 |
+
+**成功** `200`：`ImageOut`（`raw_filename` 已更新）。**失败**：`401`；`403 无权限操作该文件`；`404`；`422`。
+
+### DELETE `/image/{slug}`（需登录）
+
+仅**上传者本人或超管**可删：同时清理 **DB 记录 + 原图 + WebP 预览图**，不可恢复。
+
+**成功** `204` 空 body。**失败**：`401`；`403`；`404`（已删再删也是 404）。
 
 ---
 
@@ -713,7 +886,33 @@ const result = await uploadWithProgress(`${BASE}/image/`, file, token, (p) => {
 
 ### POST `/document/`（需登录）
 
-上传文档，字段名 `file`。支持 txt / pdf / doc / docx / xls / xlsx / ppt / pptx / zip（按 `Content-Type` 白名单校验）。
+上传文档，字段名 `file`（按 `Content-Type` 白名单校验）。
+
+**支持格式**：
+
+| 类别 | 扩展名 | MIME |
+|------|--------|------|
+| 文本/数据 | `.txt` | `text/plain` |
+| | `.csv` | `text/csv` / `application/csv` |
+| | `.md` | `text/markdown` |
+| | `.rtf` | `application/rtf` / `text/rtf` |
+| PDF | `.pdf` | `application/pdf` |
+| Word | `.doc` | `application/msword` |
+| | `.docx` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` |
+| | `.docm` | `application/vnd.ms-word.document.macroEnabled.12` |
+| Excel | `.xls` | `application/vnd.ms-excel` |
+| | `.xlsx` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` |
+| | `.xlsm` | `application/vnd.ms-excel.sheet.macroEnabled.12` |
+| PPT | `.ppt` | `application/vnd.ms-powerpoint` |
+| | `.pptx` | `application/vnd.openxmlformats-officedocument.presentationml.presentation` |
+| | `.pptm` | `application/vnd.ms-powerpoint.presentation.macroEnabled.12` |
+| OpenDocument | `.odt` `.ods` `.odp` | `application/vnd.oasis.opendocument.*` |
+| 压缩包 | `.zip` | `application/zip` / `application/x-zip-compressed` |
+| | `.7z` | `application/x-7z-compressed` |
+| | `.rar` | `application/vnd.rar` / `application/x-rar-compressed` |
+| | `.gz` `.tgz` | `application/gzip` / `application/x-gzip` |
+| | `.tar` | `application/x-tar` |
+| 电子书 | `.epub` | `application/epub+zip` |
 
 **大小限制**：默认 **50MB**（服务端环境变量 `MAX_DOCUMENT_SIZE_MB` 可调）。超出 → `400 文件大小超过限制（最大 50MB）`；空文件 → `400 文件内容为空`。
 
@@ -721,7 +920,7 @@ const result = await uploadWithProgress(`${BASE}/image/`, file, token, (p) => {
 
 | detail | 场景 |
 |--------|------|
-| `不支持的文件类型「…」，仅支持 txt、pdf、doc、docx、xls、xlsx、ppt、pptx、zip 格式` | `Content-Type` 不在白名单（含实际收到的 MIME，为空显示 `未知`） |
+| `不支持的文件类型「…」，仅支持 txt、csv、md、rtf、pdf、doc、docx、docm、xls、xlsx、xlsm、ppt、pptx、pptm、odt、ods、odp、zip、7z、rar、gz、tar、epub 格式` | `Content-Type` 不在白名单（含实际收到的 MIME，为空显示 `未知`） |
 | `文件大小超过限制（最大 50MB）` | 超过 `MAX_DOCUMENT_SIZE_MB` |
 | `文件内容为空` | 0 字节文件 |
 | `服务器磁盘空间已满，请联系管理员清理后重试` | 服务器磁盘满（`ENOSPC`） |
@@ -730,7 +929,15 @@ const result = await uploadWithProgress(`${BASE}/image/`, file, token, (p) => {
 
 > 上述失败均**不会**在磁盘留下半成品、不会写入数据库。
 
-**上传进度**：与图片相同，用 `XMLHttpRequest` + `upload.onprogress`（完整封装见 [8. 图片模块](#8-图片模块-image) 的 `uploadWithProgress` 示例，换 URL 即可）。
+**上传进度**：与图片完全同一套封装——把 URL 换成 `${BASE}/document/` 即可，支持进度条与 `AbortController` 取消（完整 `uploadWithProgress` 见 [8. 图片模块](#8-图片模块-image)）。
+
+```js
+const result = await uploadWithProgress(`${BASE}/document/`, file, token, {
+  onProgress: ({ ratio }) => (progressEl.value = ratio),
+  signal: abortController.signal,
+});
+// result.url 为下载地址（下载需带 Authorization，见下方 GET /document/{slug}）
+```
 
 **成功** `200`：
 
@@ -756,9 +963,11 @@ const result = await uploadWithProgress(`${BASE}/image/`, file, token, (p) => {
 
 **失败**：`400` 见上方失败详情表；`401` 未登录。
 
-### GET `/document/`
+### GET `/document/`（需登录）
 
-公开。分页列表，**含上传者信息**。默认按**上传时间倒序**（最新在前）。
+分页列表，**含上传者信息**。默认按**上传时间倒序**（最新在前）。
+
+**可见范围**：超管看到**全部**；普通用户只看到**自己上传的**。
 
 **查询参数**：`page`（默认 1）、`page_size`（默认 30，1~100），另支持 `sort`（均倒序，非法值 422）：
 
@@ -786,7 +995,8 @@ const result = await uploadWithProgress(`${BASE}/image/`, file, token, (p) => {
       "user": {
         "id": 1,
         "slug": "5ab74e52a00a",
-        "nickname": "管理员"
+        "nickname": "管理员",
+        "is_superuser": true
       }
     }
   ],
@@ -797,24 +1007,32 @@ const result = await uploadWithProgress(`${BASE}/image/`, file, token, (p) => {
 }
 ```
 
-### GET `/document/{slug}`
+**失败**：`401` 未登录。
 
-公开。下载文件（带原始文件名）。**每次成功访问 `view` +1**。
+### GET `/document/{slug}`（需登录）
+
+下载文件（带原始文件名）。**每次成功访问 `view` +1**。
+
+**权限**：上传者本人或超管。他人 → `403 无权限查看该文件`。
 
 **响应**：文件二进制流，`Content-Disposition: attachment`，`Content-Type` 为上传时的 MIME。
 
 前端下载示例：
 
 ```js
-window.open(`${BASE}/document/${slug}`);
-// 或 fetch 后转 blob 下载，可自定义文件名
+// 需带 Authorization 头；window.open 无法带自定义头时用 fetch 转 blob
+const res = await fetch(`${BASE}/document/${slug}`, {
+  headers: { Authorization: `Bearer ${token}` },
+});
+const blob = await res.blob();
+// 触发下载…
 ```
 
-**失败**：`404 Document not found`。
+**失败**：`401`；`403 无权限查看该文件`；`404 Document not found`。
 
 ### PATCH `/document/{slug}`（需登录）
 
-仅**上传者本人**可改文档展示名（下载时 `Content-Disposition` 的文件名）。**不替换文件内容**，`slug` / `size_bytes` / `uploaded_at` 不变。
+仅**上传者本人或超管**可改文档展示名（下载时 `Content-Disposition` 的文件名）。**不替换文件内容**，`slug` / `size_bytes` / `uploaded_at` 不变。
 
 **请求体**：
 
@@ -833,13 +1051,13 @@ window.open(`${BASE}/document/${slug}`);
 | 状态码 | detail | 场景 |
 |--------|--------|------|
 | 401 | `未提供认证凭据` 等 | 未登录 / token 无效 |
-| 403 | `无权限操作该文件` | 已登录但不是上传者 |
+| 403 | `无权限操作该文件` | 已登录但不是上传者且非超管 |
 | 404 | `Document not found` | slug 不存在 |
 | 422 | detail 数组 | `raw_filename` 为空或超长 |
 
 ### DELETE `/document/{slug}`（需登录）
 
-仅**上传者本人**可删：同时清理 **DB 记录与磁盘文件**，不可恢复。删除后 `GET /document/{slug}` 与列表均不再返回。
+仅**上传者本人或超管**可删：同时清理 **DB 记录与磁盘文件**，不可恢复。删除后 `GET /document/{slug}` 与列表均不再返回。
 
 **成功** `204` 空 body。
 
@@ -848,7 +1066,7 @@ window.open(`${BASE}/document/${slug}`);
 | 状态码 | detail | 场景 |
 |--------|--------|------|
 | 401 | `未提供认证凭据` 等 | 未登录 / token 无效 |
-| 403 | `无权限操作该文件` | 已登录但不是上传者 |
+| 403 | `无权限操作该文件` | 已登录但不是上传者且非超管 |
 | 404 | `Document not found` | slug 不存在（已删再删也是 404） |
 
 ```js
@@ -882,8 +1100,9 @@ async function deleteDocument(slug) {
 | id | int | 主键 |
 | slug | string | URL 唯一标识 |
 | nickname | string | 展示名 |
+| is_superuser | bool | 是否超级管理员（默认账号 `ruanfumin` 为 `true`） |
 
-> 不返回 `username` / 密码。
+> 不返回 `username` / 密码。前端可用 `is_superuser` 控制管理入口显隐。
 
 ### CategoryOut
 
@@ -909,9 +1128,10 @@ async function deleteDocument(slug) {
 | content | string \| null | 正文（**仅详情/创建/修改响应有**，列表没有） |
 | is_deleted | bool | 是否在回收站 |
 | is_recommended | bool | 是否推荐 |
-| create_at | datetime | 创建时间 |
-| view_count | int | 阅读量（详情访问 +1） |
-| like_count | int | 点赞数 |
+| create_at | datetime | 发布时间（超管可 PATCH 修改） |
+| view_count | int | 阅读量（详情访问 +1，**不可** PATCH） |
+| like_count | int | 点赞数（like 接口 +1，**不可** PATCH） |
+| user_id | int | 作者用户 id（超管可 PATCH 改归属） |
 | categories | CategoryTree[] | 关联的二级分类 |
 | user | UserOut \| null | 作者 |
 
@@ -963,7 +1183,11 @@ async function deleteDocument(slug) {
 检查文件 part 的 `Content-Type`（`detail` 里「」内即服务端实际收到的值）。某些场景（如手动拼 multipart、旧浏览器）`File.type` 为空，会被判为非法。前端务必用 `FormData.append("file", fileObj)` 让浏览器自动填类型。
 
 **Q：上传进度条一直不动 / 拿不到进度？**
-`fetch` 无法读取上传字节进度，必须用 `XMLHttpRequest` 的 `upload.onprogress`（见 [8. 图片模块](#8-图片模块-image) 的 `uploadWithProgress`）。注意进度只反映**客户端已发送**字节；服务端还要做落盘/生成预览图，发送到 100% 后需等待响应返回才算完成。
+`fetch` 无法读取上传字节进度，必须用 `XMLHttpRequest` 的 `upload.onprogress`（见 [8. 图片模块](#8-图片模块-image) 的 `uploadWithProgress`，图片/文档通用）。注意：
+1. 进度只反映**客户端已发送**字节；
+2. 发送到 100% 后服务端还要落盘 / 生成 WebP 预览图，需等 Promise resolve 才算完成（可加「处理中」态）；
+3. 不要手动设置 `Content-Type: multipart/form-data`，否则丢失 boundary，服务端会 422；
+4. 需要取消时用 `AbortController`，服务端会清理半成品。
 
 **Q：上传大文件报 400「文件大小超过限制」？**
 图片默认上限 10MB、文档 50MB（服务端 `MAX_IMAGE_SIZE_MB` / `MAX_DOCUMENT_SIZE_MB` 可调）。前端应在选择文件时先用 `file.size` 预检，给出友好提示，避免白传。

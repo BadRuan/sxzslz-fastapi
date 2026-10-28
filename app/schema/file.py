@@ -58,3 +58,9 @@ class DocumentUpdate(BaseModel):
     """PATCH /document/{slug}：仅支持改展示名（下载时的文件名），不替换文件内容"""
 
     raw_filename: str = Field(min_length=1, max_length=255)
+
+
+class ImageUpdate(BaseModel):
+    """PATCH /image/{slug}：仅支持改展示名，不替换文件内容"""
+
+    raw_filename: str = Field(min_length=1, max_length=255)

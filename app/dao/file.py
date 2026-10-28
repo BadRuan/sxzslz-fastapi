@@ -27,19 +27,24 @@ class FileCrud(Generic[ModelT]):
         return stmt.options(selectinload(cls.model.user))
 
     async def list_paginated(
-        self, page: int, page_size: int, order_by_field: Optional[str] = None
+        self,
+        page: int,
+        page_size: int,
+        order_by_field: Optional[str] = None,
+        user_id: Optional[int] = None,
     ) -> Tuple[List[ModelT], int]:
-        """order_by_field 缺省时用子类声明的默认排序列"""
+        """order_by_field 缺省时用子类声明的默认排序列；
+        user_id 非空时只返回该用户上传的文件（普通用户自助列表）"""
         order_column = getattr(self.model, order_by_field or self.order_by_field)
+        base = select(self.model)
+        if user_id is not None:
+            base = base.where(self.model.user_id == user_id)
         total: int = (
-            await self.session.exec(select(func.count()).select_from(self.model))
+            await self.session.exec(select(func.count()).select_from(base.subquery()))
         ).one()
         offset = (page - 1) * page_size
         stmt = self._with_user(
-            select(self.model)
-            .offset(offset)
-            .limit(page_size)
-            .order_by(desc(order_column))
+            base.offset(offset).limit(page_size).order_by(desc(order_column))
         )
         items: List[ModelT] = list((await self.session.exec(stmt)).all())
         return items, total

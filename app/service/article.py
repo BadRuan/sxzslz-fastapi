@@ -27,6 +27,7 @@ class ArticleService:
             # API 层传当前登录用户；直接调 service 时退化为默认作者
             user_id=user_id if user_id is not None else settings.DEFAULT_USER_ID,
             category_ids=data.category_ids,
+            create_at=data.create_at,
         )
         article = await self.crud.get_by_slug(article.slug)
         return ArticleDetailOut.model_validate(article)
@@ -47,6 +48,13 @@ class ArticleService:
             [ArticleOut.model_validate(a) for a in items], total, page, page_size
         )
 
+    async def find_by_slug(self, slug: str) -> Optional[ArticleDetailOut]:
+        """只读查询（权限校验 / 改前定位用）；不自增 view_count"""
+        article = await self.crud.get_by_slug(slug)
+        if article is None:
+            return None
+        return ArticleDetailOut.model_validate(article)
+
     async def get_by_slug(self, slug: str) -> Optional[ArticleDetailOut]:
         article = await self.crud.get_by_slug(slug)
         if article is None:
@@ -66,8 +74,19 @@ class ArticleService:
         out.view_count = view_count
         return out
 
-    async def update(self, slug: str, data: ArticleUpdate) -> Optional[ArticleDetailOut]:
-        article = await self.crud.update(slug, **data.model_dump(exclude_unset=True))
+    async def update(
+        self,
+        slug: str,
+        data: ArticleUpdate,
+        *,
+        allow_admin_fields: bool = False,
+    ) -> Optional[ArticleDetailOut]:
+        """allow_admin_fields=False（普通用户）时剥离 user_id / create_at，其余字段照常更新"""
+        fields = data.model_dump(exclude_unset=True)
+        if not allow_admin_fields:
+            fields.pop("user_id", None)
+            fields.pop("create_at", None)
+        article = await self.crud.update(slug, **fields)
         if article is None:
             return None
         article = await self.crud.get_by_slug(slug)

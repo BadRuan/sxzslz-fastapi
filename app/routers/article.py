@@ -20,6 +20,14 @@ from app.schema import (
 router = APIRouter()
 
 
+def _ensure_can_modify(
+    article_user_id: int, current_user: User, *, detail: str = "无权修改他人文章"
+) -> None:
+    """非作者且非超管 → 403（不存在已在调用前用 404 拦截）"""
+    if article_user_id != current_user.id and not current_user.is_superuser:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+
+
 @router.post("/", response_model=ArticleDetailOut, status_code=status.HTTP_201_CREATED)
 async def create_article(
     data: ArticleCreate,
@@ -27,8 +35,12 @@ async def create_article(
     current_user: User = Depends(get_current_user),
 ):
     # 业务校验失败（ServiceError）由全局 handler 统一转 400
-    # data.user_id 显式指定发布主体；未传则归属当前登录用户
+    # data.user_id 显式指定发布主体；未传则归属当前登录用户；仅超管可指定他人
     author_id = data.user_id if data.user_id is not None else current_user.id
+    if author_id != current_user.id and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="无权指定其他用户发布"
+        )
     return await ArticleService(session).create(data, user_id=author_id)
 
 
@@ -73,9 +85,17 @@ async def update_article(
     slug: str,
     data: ArticleUpdate,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    article = await ArticleService(session).update(slug, data)
+    """普通用户仅可改自己文章的正文类字段；超管可改任意文章并指定 user_id / create_at"""
+    service = ArticleService(session)
+    existing = await service.find_by_slug(slug)
+    if existing is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")
+    _ensure_can_modify(existing.user_id, current_user)
+    article = await service.update(
+        slug, data, allow_admin_fields=current_user.is_superuser
+    )
     if article is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")
     return article
@@ -95,11 +115,15 @@ async def like_article(slug: str, session: AsyncSession = Depends(get_session)):
 async def delete_article(
     slug: str,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
+    """软删除：作者本人或超管"""
     service = ArticleService(session)
-    if not await service.delete(slug):
+    existing = await service.find_by_slug(slug)
+    if existing is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")
+    _ensure_can_modify(existing.user_id, current_user, detail="无权删除他人文章")
+    await service.delete(slug)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -107,10 +131,14 @@ async def delete_article(
 async def restore_article(
     slug: str,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """恢复回收站中的文章（幂等）：文章重新进入正常列表"""
+    """恢复回收站中的文章（幂等）：作者本人或超管"""
     service = ArticleService(session)
+    existing = await service.crud.get_by_slug(slug, include_deleted=True)
+    if existing is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")
+    _ensure_can_modify(existing.user_id, current_user, detail="无权恢复他人文章")
     article = await service.restore(slug)
     if article is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")

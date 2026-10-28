@@ -23,9 +23,10 @@ class DocumentService:
         page: int,
         page_size: int,
         sort: DocumentSort = DocumentSort.uploaded_at,
+        user_id: int | None = None,
     ) -> PageResponse[DocumentOut]:
         items, total = await self.crud.list_paginated(
-            page, page_size, order_by_field=sort.value
+            page, page_size, order_by_field=sort.value, user_id=user_id
         )
         return page_response(
             [DocumentOut.model_validate(i) for i in items], total, page, page_size

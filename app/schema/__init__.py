@@ -25,6 +25,7 @@ from app.schema.file import (
     DocumentSort,
     DocumentUpdate,
     ImageOut,
+    ImageUpdate,
     UploadResult,
 )
 from app.schema.user import BaseInfoOut, UserOut
@@ -46,6 +47,7 @@ __all__ = [
     "DocumentSort",
     "DocumentUpdate",
     "ImageOut",
+    "ImageUpdate",
     "LoginRequest",
     "PageResponse",
     "PasswordChangeOut",

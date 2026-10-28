@@ -26,8 +26,10 @@ class ImageService:
     def __init__(self, session: AsyncSession) -> None:
         self.crud = ImageCrud(session)
 
-    async def list_paginated(self, page: int, page_size: int) -> PageResponse[ImageOut]:
-        items, total = await self.crud.list_paginated(page, page_size)
+    async def list_paginated(
+        self, page: int, page_size: int, user_id: int | None = None
+    ) -> PageResponse[ImageOut]:
+        items, total = await self.crud.list_paginated(page, page_size, user_id=user_id)
         return page_response(
             [ImageOut.model_validate(i) for i in items], total, page, page_size
         )
@@ -74,6 +76,10 @@ class ImageService:
         )
         return await self.crud.get_by_slug(slugname)
 
+    async def find_by_slug(self, slugname: str) -> Optional[Image]:
+        """只读查询，不自增 view（权限校验 / 改名前定位用）"""
+        return await self.crud.get_by_slug(slugname)
+
     async def remove_by_slug(self, slugname: str) -> bool:
         result = await self.crud.remove_by_slug(slugname)
         if result:
@@ -87,6 +93,10 @@ class ImageService:
                 remove(preview_file_path)
             return True
         return False
+
+    async def rename(self, slugname: str, raw_filename: str) -> Optional[Image]:
+        """改展示名；记录不存在返回 None"""
+        return await self.crud.update_raw_filename(slugname, raw_filename)
 
     async def get_by_slug(self, slugname: str) -> Optional[Image]:
         image: Optional[Image] = await self.crud.get_by_slug(slugname)

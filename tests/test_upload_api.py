@@ -97,11 +97,11 @@ async def test_upload_records_uploader(client, session, default_user, auth_heade
     )
     assert doc_resp.status_code == 200
 
-    img_list = (await client.get("/image/")).json()["data"][0]
+    img_list = (await client.get("/image/", headers=auth_headers)).json()["data"][0]
     assert img_list["user_id"] == default_user.id
     assert img_list["user"]["nickname"] == "管理员"
 
-    doc_list = (await client.get("/document/")).json()["data"][0]
+    doc_list = (await client.get("/document/", headers=auth_headers)).json()["data"][0]
     assert doc_list["user_id"] == default_user.id
     assert doc_list["user"]["id"] == default_user.id
 
@@ -126,7 +126,7 @@ async def test_upload_document_too_large(client, auth_headers, tmp_path, monkeyp
     assert resp.status_code == 400
     assert "超过限制" in resp.json()["detail"]
     # 无半成品落盘、无脏数据入库
-    assert (await client.get("/document/")).json()["total"] == 0
+    assert (await client.get("/document/", headers=auth_headers)).json()["total"] == 0
     if doc_dir.exists():
         assert list(doc_dir.iterdir()) == []
 
@@ -148,6 +148,26 @@ async def test_upload_empty_file_rejected(client, auth_headers, tmp_path, monkey
     )
     assert resp.status_code == 400
     assert resp.json()["detail"] == "文件内容为空"
+
+
+async def test_write_upload_stream_cleans_up_on_client_disconnect(tmp_path):
+    """客户端中断上传：抛 ClientDisconnect 且半成品已清理"""
+    from starlette.requests import ClientDisconnect
+
+    from app.utils.io import write_upload_stream
+
+    class _DisconnectingFile:
+        async def read(self, size: int = -1) -> bytes:
+            raise ClientDisconnect()
+
+    target = tmp_path / "partial.bin"
+    target.write_bytes(b"partial")
+    try:
+        await write_upload_stream(str(target), _DisconnectingFile())  # type: ignore[arg-type]
+        raise AssertionError("应当抛出 ClientDisconnect")
+    except ClientDisconnect:
+        pass
+    assert not target.exists()
 
 
 def test_storage_error_from_classifies_oserror():
@@ -193,7 +213,7 @@ async def test_upload_document_disk_full(client, auth_headers, tmp_path, monkeyp
     )
     assert resp.status_code == 400
     assert "磁盘空间已满" in resp.json()["detail"]
-    assert (await client.get("/document/")).json()["total"] == 0
+    assert (await client.get("/document/", headers=auth_headers)).json()["total"] == 0
     if doc_dir.exists():
         assert list(doc_dir.iterdir()) == []
 
@@ -222,7 +242,7 @@ async def test_upload_document_permission_denied(
     )
     assert resp.status_code == 400
     assert "无写入权限" in resp.json()["detail"]
-    assert (await client.get("/document/")).json()["total"] == 0
+    assert (await client.get("/document/", headers=auth_headers)).json()["total"] == 0
 
 
 async def test_upload_document_unsupported_type(client, auth_headers):
@@ -242,13 +262,67 @@ async def test_upload_image_unsupported_type(client, auth_headers):
     """图片 Content-Type 不在白名单 → 400，detail 带上实际收到的类型"""
     resp = await client.post(
         "/image/",
-        files={"file": ("t.bmp", b"BM", "image/bmp")},
+        files={"file": ("t.heic", b"heic", "image/heic")},
         headers=auth_headers,
     )
     assert resp.status_code == 400
     detail = resp.json()["detail"]
-    assert "image/bmp" in detail
+    assert "image/heic" in detail
     assert "不支持的图片类型" in detail
+
+
+async def test_upload_image_bmp_allowed(client, auth_headers, tmp_path, monkeypatch):
+    """BMP 在白名单内（PIL 可解码生成预览）"""
+    from app.service import image as image_service_module
+    from app.utils import genwebp
+
+    raw, preview = tmp_path / "raw", tmp_path / "preview"
+    raw.mkdir(), preview.mkdir()
+    stub = UploadDir(image_raw=str(raw), image_preview=str(preview), document=str(tmp_path))
+    monkeypatch.setattr(image_service_module, "upload_dir", stub)
+    monkeypatch.setattr(genwebp, "upload_dir", stub)
+
+    buf = io.BytesIO()
+    Image.new("RGB", (4, 4), (1, 2, 3)).save(buf, format="BMP")
+    resp = await client.post(
+        "/image/",
+        files={"file": ("t.bmp", buf.getvalue(), "image/bmp")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["slug"].endswith(".bmp")
+
+
+async def test_upload_document_new_common_types_accepted(
+    client, auth_headers, tmp_path, monkeypatch
+):
+    """扩展白名单：csv / 7z / odt / epub / rar 等 MIME 可通过类型校验"""
+    from app.service import document as document_service_module
+
+    doc_dir = tmp_path / "doc"
+    monkeypatch.setattr(
+        document_service_module,
+        "upload_dir",
+        UploadDir(
+            image_raw=str(tmp_path / "r"),
+            image_preview=str(tmp_path / "p"),
+            document=str(doc_dir),
+        ),
+    )
+    cases = [
+        ("a.csv", b"a,b\n1,2\n", "text/csv"),
+        ("b.7z", b"7z\xbc\xaf'\x1c", "application/x-7z-compressed"),
+        ("c.odt", b"PK\x03\x04odt", "application/vnd.oasis.opendocument.text"),
+        ("d.epub", b"PK\x03\x04epub", "application/epub+zip"),
+        ("e.rar", b"Rar!\x1a\x07\x00", "application/vnd.rar"),
+    ]
+    for name, content, mime in cases:
+        resp = await client.post(
+            "/document/",
+            files={"file": (name, content, mime)},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, f"{mime} 应被接受，实际 {resp.status_code}: {resp.text}"
 
 
 async def test_upload_image_corrupt_content(
@@ -272,7 +346,7 @@ async def test_upload_image_corrupt_content(
     assert resp.status_code == 400
     assert "不是有效的图片文件" in resp.json()["detail"]
     assert list(raw.iterdir()) == []
-    assert (await client.get("/image/")).json()["total"] == 0
+    assert (await client.get("/image/", headers=auth_headers)).json()["total"] == 0
 
 
 def _stub_doc_upload_dir(tmp_path, monkeypatch):
@@ -309,8 +383,10 @@ async def test_delete_document_owner(client, auth_headers, tmp_path, monkeypatch
     assert resp.status_code == 204
     assert resp.content == b""
     assert not (doc_dir / slug).exists()
-    assert (await client.get("/document/")).json()["total"] == 0
-    assert (await client.get(f"/document/{slug}")).status_code == 404
+    assert (await client.get("/document/", headers=auth_headers)).json()["total"] == 0
+    assert (
+        await client.get(f"/document/{slug}", headers=auth_headers)
+    ).status_code == 404
 
 
 async def test_delete_document_requires_auth(client, auth_headers, tmp_path, monkeypatch):
@@ -345,7 +421,9 @@ async def test_delete_document_forbidden_for_other_user(
     assert resp.status_code == 403
     assert resp.json()["detail"] == "无权限操作该文件"
     assert (doc_dir / slug).is_file()
-    assert (await client.get("/document/")).json()["total"] == 1
+    assert (
+        await client.get("/document/", headers=auth_headers)
+    ).json()["total"] == 1
     # 本人仍可删
     assert (await client.delete(f"/document/{slug}", headers=auth_headers)).status_code == 204
 
@@ -378,11 +456,11 @@ async def test_patch_document_rename_owner(client, auth_headers, tmp_path, monke
     assert data["slug"] == slug  # slug 不变
 
     # 列表同步
-    listed = (await client.get("/document/")).json()["data"][0]
+    listed = (await client.get("/document/", headers=auth_headers)).json()["data"][0]
     assert listed["raw_filename"] == "新报告名.txt"
 
     # 下载 Content-Disposition 使用新文件名（非 ASCII 走 RFC 5987 filename*）
-    download = await client.get(f"/document/{slug}")
+    download = await client.get(f"/document/{slug}", headers=auth_headers)
     assert download.status_code == 200
     disposition = download.headers.get("content-disposition", "")
     assert "attachment" in disposition

@@ -5,6 +5,7 @@ from os.path import exists
 from typing import Iterable
 
 from fastapi import UploadFile
+from starlette.requests import ClientDisconnect
 
 DEFAULT_CHUNK_SIZE = 1024 * 1024  # 1MB
 
@@ -62,8 +63,10 @@ async def write_upload_stream(
 ) -> int:
     """分块流式落盘上传文件（边收边写，避免整文件进内存）；返回总字节数。
 
-    超过 max_bytes 删除半成品并抛 FileTooLargeError；
-    磁盘满 / 无权限 / 写入失败删除半成品并抛 StorageError。
+    失败路径一律删除半成品：
+    - 超过 max_bytes → FileTooLargeError
+    - 磁盘满 / 无权限 / 写入失败 → StorageError
+    - 客户端中断上传（取消/断网）→ ClientDisconnect 原样抛出（连接已断，无需响应体）
     """
     total = 0
     try:
@@ -79,8 +82,16 @@ async def write_upload_stream(
     except FileTooLargeError:
         _remove_quietly(filepath)
         raise
+    except ClientDisconnect:
+        # 用户取消 / 断网：清理半成品，避免 uploads 残留垃圾文件
+        _remove_quietly(filepath)
+        raise
     except OSError as exc:
         _remove_quietly(filepath)
         raise storage_error_from(exc) from exc
+    except Exception:
+        # 兜底：任何未预期异常也不留半成品
+        _remove_quietly(filepath)
+        raise
     return total
 

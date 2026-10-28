@@ -111,8 +111,8 @@ async def test_document_list_sort_by_view(session):
     assert [d.slug for d in page.data] == ["slug1.pdf", "slug2.pdf", "slug0.pdf"]
 
 
-async def test_document_list_sort_api_param(client, session):
-    """API 层：sort 参数可选，非法值 422"""
+async def test_document_list_sort_api_param(client, session, superadmin_headers):
+    """API 层：sort 参数可选，非法值 422；列表需登录（超管看全部）"""
     for i, v in enumerate([5, 30]):
         session.add(
             Document(
@@ -127,11 +127,13 @@ async def test_document_list_sort_api_param(client, session):
     await session.flush()
 
     # 默认：上传时间倒序（同批插入，顺序按 SQLite 返回即可，只校验 200 与结构）
-    default_resp = await client.get("/document/")
+    default_resp = await client.get("/document/", headers=superadmin_headers)
     assert default_resp.status_code == 200
 
-    view_resp = await client.get("/document/?sort=view")
+    view_resp = await client.get("/document/?sort=view", headers=superadmin_headers)
     assert view_resp.status_code == 200
     assert [d["slug"] for d in view_resp.json()["data"]] == ["slug1.pdf", "slug0.pdf"]
 
-    assert (await client.get("/document/?sort=create_at")).status_code == 422
+    assert (
+        await client.get("/document/?sort=create_at", headers=superadmin_headers)
+    ).status_code == 422

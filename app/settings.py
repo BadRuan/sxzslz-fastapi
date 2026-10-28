@@ -38,7 +38,7 @@ class UploadDir(NamedTuple):
 
 
 class AllowType(NamedTuple):
-    """上传文件允许的 MIME 类型白名单。"""
+    """上传文件允许的 MIME 类型白名单（按扩展名/Content-Type 对齐常见格式）。"""
 
     image: List[str]
     document: List[str]
@@ -52,17 +52,61 @@ upload_dir = UploadDir(
     document=base_dir + "document",
 )
 
+# 图片：仅列 PIL 可解码生成 WebP 预览的格式（SVG/HEIC/AVIF 等无插件会预览失败，不放开）
 allow_type: AllowType = AllowType(
-    image=["image/jpeg", "image/png", "image/gif", "image/webp"],
-    document=[
-        "application/msword",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "application/vnd.ms-excel",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/vnd.ms-powerpoint",
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        "text/plain",
-        "application/pdf",
-        "application/zip",
+    image=[
+        "image/jpeg",  # .jpg / .jpeg
+        "image/png",  # .png
+        "image/gif",  # .gif
+        "image/webp",  # .webp
+        "image/bmp",  # .bmp
+        "image/x-ms-bmp",  # Windows 资源管理器里的 .bmp 常报这个
+        "image/tiff",  # .tif / .tiff
+        "image/x-icon",  # .ico
+        "image/vnd.microsoft.icon",  # .ico 变体
     ],
+    document=[
+        # 纯文本 / 数据
+        "text/plain",  # .txt
+        "text/csv",  # .csv
+        "application/csv",
+        "text/markdown",  # .md
+        "text/rtf",
+        "application/rtf",  # .rtf
+        # PDF
+        "application/pdf",  # .pdf
+        # Microsoft Office（旧版 + OOXML + 启用宏的常见 MIME）
+        "application/msword",  # .doc
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
+        "application/vnd.ms-word.document.macroEnabled.12",  # .docm
+        "application/vnd.ms-excel",  # .xls
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
+        "application/vnd.ms-excel.sheet.macroEnabled.12",  # .xlsm
+        "application/vnd.ms-powerpoint",  # .ppt
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",  # .pptx
+        "application/vnd.ms-powerpoint.presentation.macroEnabled.12",  # .pptm
+        # OpenDocument
+        "application/vnd.oasis.opendocument.text",  # .odt
+        "application/vnd.oasis.opendocument.spreadsheet",  # .ods
+        "application/vnd.oasis.opendocument.presentation",  # .odp
+        # 压缩包
+        "application/zip",  # .zip
+        "application/x-zip-compressed",  # Windows 资源管理器 .zip
+        "application/x-7z-compressed",  # .7z
+        "application/x-rar-compressed",  # .rar（旧 MIME）
+        "application/vnd.rar",  # .rar（IANA 注册 MIME）
+        "application/gzip",  # .gz / .tgz
+        "application/x-gzip",
+        "application/x-tar",  # .tar
+        # 电子书
+        "application/epub+zip",  # .epub
+    ],
+)
+
+# 展示给前端的友好后缀列表（与 allow_type 同步维护；报错文案引用）
+IMAGE_TYPE_LABEL = "JPG、PNG、GIF、WebP、BMP、TIFF、ICO"
+DOCUMENT_TYPE_LABEL = (
+    "txt、csv、md、rtf、pdf、"
+    "doc、docx、docm、xls、xlsx、xlsm、ppt、pptx、pptm、"
+    "odt、ods、odp、zip、7z、rar、gz、tar、epub"
 )

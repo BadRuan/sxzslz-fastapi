@@ -90,8 +90,8 @@ async def test_create_article_owned_by_current_user(client, auth_headers):
     assert data["user"]["nickname"] == "管理员"
 
 
-async def test_create_article_with_explicit_user_id(client, session, auth_headers):
-    """body 传 user_id 指定发布主体；响应 user.id 与传入一致"""
+async def test_create_article_with_explicit_user_id(client, session, superadmin_headers):
+    """超管 body 传 user_id 指定发布主体；响应 user.id 与传入一致"""
     from app.model import User
 
     other = User.create_user(username="author2", nickname="作者二", password="test123")
@@ -101,12 +101,31 @@ async def test_create_article_with_explicit_user_id(client, session, auth_header
     resp = await client.post(
         "/articles/",
         json={"title": "代发文章", "user_id": other.id},
-        headers=auth_headers,
+        headers=superadmin_headers,
     )
     assert resp.status_code == 201
     data = resp.json()
     assert data["user"]["id"] == other.id
     assert data["user"]["nickname"] == "作者二"
+
+
+async def test_create_article_explicit_user_id_forbidden_for_normal(
+    client, session, default_user, auth_headers
+):
+    """普通用户不能指定他人为发布主体 → 403"""
+    from app.model import User
+
+    other = User.create_user(username="author3", nickname="作者三", password="test123")
+    session.add(other)
+    await session.flush()
+
+    resp = await client.post(
+        "/articles/",
+        json={"title": "越权代发", "user_id": other.id},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "无权指定其他用户发布"
 
 
 async def test_create_article_user_id_zero_rejected(client, auth_headers):

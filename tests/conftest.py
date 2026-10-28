@@ -52,7 +52,24 @@ async def default_user(session):
 
 
 @pytest.fixture
+async def superadmin(session):
+    """超级管理员（与生产约定一致：username=ruanfumin）"""
+    user = User.create_user(
+        username="ruanfumin", nickname="超管", password="test123", is_superuser=True
+    )
+    session.add(user)
+    await session.flush()
+    return user
+
+
+@pytest.fixture
 async def auth_headers(default_user):
-    """写操作所需的 Bearer 鉴权头"""
+    """写操作所需的 Bearer 鉴权头（普通用户 admin）"""
     token = create_access_token(default_user.id)
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+async def superadmin_headers(superadmin):
+    token = create_access_token(superadmin.id)
     return {"Authorization": f"Bearer {token}"}

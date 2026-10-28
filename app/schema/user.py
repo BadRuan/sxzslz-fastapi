@@ -9,6 +9,7 @@ class UserOut(BaseModel):
     id: int
     slug: str
     nickname: str
+    is_superuser: bool = False
 
 
 class BaseInfoOut(BaseModel):
