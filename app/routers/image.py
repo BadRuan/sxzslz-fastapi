@@ -37,8 +37,10 @@ async def upload_image(
     current_user: User = Depends(get_current_user),
 ):
     if file.content_type not in allow_type.image:
+        received = file.content_type or "未知"
         raise HTTPException(
-            status_code=400, detail="仅支持 JPG, PNG, GIF, WebP 格式的图片"
+            status_code=400,
+            detail=f"不支持的图片类型「{received}」，仅支持 JPG、PNG、GIF、WebP 格式",
         )
 
     filename = file.filename or "default_name"

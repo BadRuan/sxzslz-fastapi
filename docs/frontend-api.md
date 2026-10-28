@@ -32,7 +32,7 @@
 | 请求编码 | JSON 接口：`Content-Type: application/json`；上传接口：`multipart/form-data`，文件字段名**固定为 `file`** |
 | 时间格式 | `create_at` / `uploaded_at` 为 ISO 8601 **本地时间、无时区后缀**，如 `2026-10-27T13:01:37.520947`，按服务器时区（`Asia/Shanghai`）解析 |
 | 跨域 | 前端源必须包含在服务端环境变量 `CORS_ORIGINS`（逗号分隔），否则浏览器拦截 |
-| 上传大小 | 服务端**未强制限制**体积，建议前端自行限制（图片建议 ≤ 10MB） |
+| 上传大小 | 服务端强制限制：图片默认 ≤ 10MB（`MAX_IMAGE_SIZE_MB`）、文档默认 ≤ 50MB（`MAX_DOCUMENT_SIZE_MB`）；超限返回 `400`。前端仍建议用 `file.size` 预检，避免白传 |
 | 在线调试 | 开发环境访问 `/docs`（Swagger UI）可交互调试全部接口 |
 
 ### 鉴权总览
@@ -212,11 +212,16 @@ function showError(res) {
 | `文章仅支持关联二级分类` | `category_ids` 含一级分类 id |
 | `字段 title 不能为空` | PATCH 非空字段显式传 `null`（字段名随实际而变） |
 | `文章不存在或已删除: xxx` | 批量分类时 slug 不存在（整批不生效） |
-| `仅支持 JPG, PNG, GIF, WebP 格式的图片` | 图片 `Content-Type` 不在白名单 |
-| `仅支持txt、pdf、doc、docx、xls、xlsx、ppt、pptx、zip格式的文件` | 文件 `Content-Type` 不在白名单 |
+| `不支持的图片类型「{实际Content-Type}」，仅支持 JPG、PNG、GIF、WebP 格式` | 图片 `Content-Type` 不在白名单（`{}` 内为服务端实际收到的 MIME，为空显示 `未知`） |
+| `不支持的文件类型「{实际Content-Type}」，仅支持 txt、pdf、doc、docx、xls、xlsx、ppt、pptx、zip 格式` | 文档 `Content-Type` 不在白名单 |
 | `图片大小超过限制（最大 10MB）` | 图片超过 `MAX_IMAGE_SIZE_MB` |
 | `文件大小超过限制（最大 50MB）` | 文档超过 `MAX_DOCUMENT_SIZE_MB` |
 | `文件内容为空` | 上传 0 字节文件 |
+| `不是有效的图片文件（内容可能已损坏或格式不符）` | MIME 合法但内容无法被解码（伪图片 / 文件损坏） |
+| `服务器磁盘空间已满，请联系管理员清理后重试` | 服务器磁盘写满（`ENOSPC`） |
+| `服务器存储目录无写入权限，请联系管理员` | 上传目录无写权限（`EACCES` / `EPERM`） |
+| `文件保存到服务器失败，请稍后重试` | 其他落盘 I/O 错误 |
+| `图片处理失败，请更换图片后重试` | 生成 WebP 预览图时发生未预期错误 |
 | `无权限操作该文件` | PATCH / DELETE 非上传者本人（403） |
 
 ### 404 的 detail 取值
@@ -573,7 +578,22 @@ const list = await get("/articles/");
 
 上传图片，`multipart/form-data`，字段名 `file`。支持 JPG / PNG / GIF / WebP。服务端自动生成 WebP 预览图（透明背景保留）。
 
-**大小限制**：默认 **10MB**（服务端环境变量 `MAX_IMAGE_SIZE_MB` 可调）。超出 → `400 图片大小超过限制（最大 10MB）`；空文件 → `400 文件内容为空`。
+**大小限制**：默认 **10MB**（服务端环境变量 `MAX_IMAGE_SIZE_MB` 可调）。超出 → `400 图片大小超过限制（最大 10MB）`；空文件 → `400 文件内容为空`；内容损坏 → `400 不是有效的图片文件（内容可能已损坏或格式不符）`。
+
+**上传失败详情**（均为 `400`，`detail` 为字符串，可直接 toast）：
+
+| detail | 场景 |
+|--------|------|
+| `不支持的图片类型「…」，仅支持 JPG、PNG、GIF、WebP 格式` | `Content-Type` 不在白名单（含实际收到的 MIME） |
+| `图片大小超过限制（最大 10MB）` | 超过 `MAX_IMAGE_SIZE_MB` |
+| `文件内容为空` | 0 字节文件 |
+| `不是有效的图片文件（内容可能已损坏或格式不符）` | MIME 合法但 PIL 无法解码 |
+| `服务器磁盘空间已满，请联系管理员清理后重试` | 服务器磁盘满（`ENOSPC`） |
+| `服务器存储目录无写入权限，请联系管理员` | 上传目录无写权限 |
+| `文件保存到服务器失败，请稍后重试` | 其他落盘 I/O 错误 |
+| `图片处理失败，请更换图片后重试` | 生成 WebP 预览图时未预期错误 |
+
+> 上述失败均**不会**在磁盘留下半成品、不会写入数据库。
 
 **上传进度（前端）**：进度条用 `XMLHttpRequest` 的 `upload.onprogress`（`fetch` 无法直接拿上传进度）：
 
@@ -632,7 +652,7 @@ const result = await uploadWithProgress(`${BASE}/image/`, file, token, (p) => {
 
 > `slug` **保留原始扩展名**，可直接用于文章 `cover_img_slug` 与 `<img src>`。
 
-**失败**：`400` 格式不支持 / 超过大小限制 / 空文件 / 上传失败；`401` 未登录。
+**失败**：`400` 见上方失败详情表；`401` 未登录。
 
 ### GET `/image/`
 
@@ -697,6 +717,19 @@ const result = await uploadWithProgress(`${BASE}/image/`, file, token, (p) => {
 
 **大小限制**：默认 **50MB**（服务端环境变量 `MAX_DOCUMENT_SIZE_MB` 可调）。超出 → `400 文件大小超过限制（最大 50MB）`；空文件 → `400 文件内容为空`。
 
+**上传失败详情**（均为 `400`，`detail` 为字符串，可直接 toast）：
+
+| detail | 场景 |
+|--------|------|
+| `不支持的文件类型「…」，仅支持 txt、pdf、doc、docx、xls、xlsx、ppt、pptx、zip 格式` | `Content-Type` 不在白名单（含实际收到的 MIME，为空显示 `未知`） |
+| `文件大小超过限制（最大 50MB）` | 超过 `MAX_DOCUMENT_SIZE_MB` |
+| `文件内容为空` | 0 字节文件 |
+| `服务器磁盘空间已满，请联系管理员清理后重试` | 服务器磁盘满（`ENOSPC`） |
+| `服务器存储目录无写入权限，请联系管理员` | 上传目录无写权限（`EACCES` / `EPERM`） |
+| `文件保存到服务器失败，请稍后重试` | 其他落盘 I/O 错误 |
+
+> 上述失败均**不会**在磁盘留下半成品、不会写入数据库。
+
 **上传进度**：与图片相同，用 `XMLHttpRequest` + `upload.onprogress`（完整封装见 [8. 图片模块](#8-图片模块-image) 的 `uploadWithProgress` 示例，换 URL 即可）。
 
 **成功** `200`：
@@ -721,7 +754,7 @@ const result = await uploadWithProgress(`${BASE}/image/`, file, token, (p) => {
 | url | **下载**相对地址（拼 BASE 后 `window.open` 或 fetch 转 blob） |
 | raw_url | 固定 `null`（文档无预览/原图之分） |
 
-**失败**：`400` 格式不支持 / 超过大小限制 / 空文件；`401` 未登录。
+**失败**：`400` 见上方失败详情表；`401` 未登录。
 
 ### GET `/document/`
 
@@ -926,14 +959,17 @@ async function deleteDocument(slug) {
 **Q：请求 `/articles`（不带尾斜杠）返回 307？**
 集合路径必须带尾斜杠：`/articles/`。307 会重定向，部分浏览器对重定向后的 POST/PATCH 请求体处理异常。
 
-**Q：上传图片返回 400「仅支持 JPG, PNG, GIF, WebP 格式的图片」？**
-检查文件 part 的 `Content-Type`。某些场景（如手动拼 multipart、旧浏览器）`File.type` 为空，会被判为非法。前端务必用 `FormData.append("file", fileObj)` 让浏览器自动填类型。
+**Q：上传图片返回 400「不支持的图片类型「…」」？**
+检查文件 part 的 `Content-Type`（`detail` 里「」内即服务端实际收到的值）。某些场景（如手动拼 multipart、旧浏览器）`File.type` 为空，会被判为非法。前端务必用 `FormData.append("file", fileObj)` 让浏览器自动填类型。
 
 **Q：上传进度条一直不动 / 拿不到进度？**
 `fetch` 无法读取上传字节进度，必须用 `XMLHttpRequest` 的 `upload.onprogress`（见 [8. 图片模块](#8-图片模块-image) 的 `uploadWithProgress`）。注意进度只反映**客户端已发送**字节；服务端还要做落盘/生成预览图，发送到 100% 后需等待响应返回才算完成。
 
 **Q：上传大文件报 400「文件大小超过限制」？**
 图片默认上限 10MB、文档 50MB（服务端 `MAX_IMAGE_SIZE_MB` / `MAX_DOCUMENT_SIZE_MB` 可调）。前端应在选择文件时先用 `file.size` 预检，给出友好提示，避免白传。
+
+**Q：上传报 400「服务器磁盘空间已满」/「无写入权限」/「保存到服务器失败」？**
+这是**服务端存储问题**，不是用户文件的问题。前端直接 toast `detail` 即可；磁盘满与权限问题需运维介入（清理 `uploads/` 或修目录权限），用户侧重试通常无效。
 
 **Q：浏览器控制台报 CORS 错误？**
 前端源（如 `http://localhost:5173`）必须加入服务端 `.env` 的 `CORS_ORIGINS`（逗号分隔多个），改完需重启服务。

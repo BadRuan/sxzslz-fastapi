@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import UploadFile
+from PIL import UnidentifiedImageError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.dao import ImageCrud
@@ -13,8 +14,10 @@ from app.schema import PageResponse, ImageOut, page_response
 from app.settings import settings, upload_dir
 from app.utils import (
     FileTooLargeError,
+    StorageError,
     ensure_dirs,
     generate_webp_images,
+    storage_error_from,
     write_upload_stream,
 )
 
@@ -34,21 +37,33 @@ class ImageService:
     ) -> Optional[Image]:
         suffix = Path(filename).suffix
         slugname = generate_slug() + suffix
+        raw_path = path.join(upload_dir.image_raw, slugname)
         # 只在真正落盘时确保目录存在（exist_ok，避免每个请求都建目录）
         ensure_dirs((upload_dir.image_raw, upload_dir.image_preview))
-        raw_path = path.join(upload_dir.image_raw, slugname)
         try:
             size = await write_upload_stream(
                 raw_path, file, max_bytes=settings.MAX_IMAGE_SIZE_MB * 1024 * 1024
             )
         except FileTooLargeError:
             raise ServiceError(f"图片大小超过限制（最大 {settings.MAX_IMAGE_SIZE_MB}MB）")
+        except StorageError as exc:
+            raise ServiceError(str(exc)) from exc
         if size == 0:
             remove(raw_path)
             raise ServiceError("文件内容为空")
 
-        # 生成预览图和缩略图（PIL 在线程池执行）
-        await generate_webp_images(slugname)
+        # 生成预览图和缩略图（PIL 在线程池执行）；失败清理原图，不残留半成品
+        try:
+            await generate_webp_images(slugname)
+        except UnidentifiedImageError:
+            remove(raw_path)
+            raise ServiceError("不是有效的图片文件（内容可能已损坏或格式不符）") from None
+        except OSError as exc:
+            remove(raw_path)
+            raise ServiceError(storage_error_from(exc)) from exc
+        except Exception as exc:
+            remove(raw_path)
+            raise ServiceError("图片处理失败，请更换图片后重试") from exc
 
         await self.crud.add(
             raw_filename=filename,

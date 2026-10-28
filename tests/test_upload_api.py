@@ -150,6 +150,131 @@ async def test_upload_empty_file_rejected(client, auth_headers, tmp_path, monkey
     assert resp.json()["detail"] == "文件内容为空"
 
 
+def test_storage_error_from_classifies_oserror():
+    """storage_error_from 把 ENOSPC / EACCES / 其他 OSError 映射为可读文案"""
+    import errno
+
+    from app.utils.io import StorageError, storage_error_from
+
+    cases = [
+        (errno.ENOSPC, "磁盘空间已满"),
+        (errno.EACCES, "无写入权限"),
+        (errno.EPERM, "无写入权限"),
+        (errno.EIO, "保存到服务器失败"),
+    ]
+    for err_no, keyword in cases:
+        mapped = storage_error_from(OSError(err_no, "os error"))
+        assert isinstance(mapped, StorageError)
+        assert keyword in str(mapped)
+
+
+async def test_upload_document_disk_full(client, auth_headers, tmp_path, monkeypatch):
+    """写盘时 ENOSPC → 400 磁盘空间已满，半成品已清理"""
+    import errno
+
+    import app.utils.io as io_module
+
+    doc_dir = _stub_doc_upload_dir(tmp_path, monkeypatch)
+    real_open = open
+
+    def fake_open(file, mode="r", *args, **kwargs):
+        fh = real_open(file, mode, *args, **kwargs)
+        if "w" in mode:
+            def failing_write(data):
+                raise OSError(errno.ENOSPC, "No space left on device")
+            fh.write = failing_write
+        return fh
+
+    monkeypatch.setattr(io_module, "open", fake_open, raising=False)
+    resp = await client.post(
+        "/document/",
+        files={"file": ("t.txt", b"hello", "text/plain")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+    assert "磁盘空间已满" in resp.json()["detail"]
+    assert (await client.get("/document/")).json()["total"] == 0
+    if doc_dir.exists():
+        assert list(doc_dir.iterdir()) == []
+
+
+async def test_upload_document_permission_denied(
+    client, auth_headers, tmp_path, monkeypatch
+):
+    """写盘时 EACCES → 400 无写入权限"""
+    import errno
+
+    import app.utils.io as io_module
+
+    _stub_doc_upload_dir(tmp_path, monkeypatch)
+    real_open = open
+
+    def fake_open(file, mode="r", *args, **kwargs):
+        if "w" in mode:
+            raise OSError(errno.EACCES, "Permission denied")
+        return real_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(io_module, "open", fake_open, raising=False)
+    resp = await client.post(
+        "/document/",
+        files={"file": ("t.txt", b"hello", "text/plain")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+    assert "无写入权限" in resp.json()["detail"]
+    assert (await client.get("/document/")).json()["total"] == 0
+
+
+async def test_upload_document_unsupported_type(client, auth_headers):
+    """Content-Type 不在白名单 → 400，detail 带上实际收到的类型"""
+    resp = await client.post(
+        "/document/",
+        files={"file": ("evil.exe", b"MZ", "application/x-msdownload")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert "application/x-msdownload" in detail
+    assert "不支持的文件类型" in detail
+
+
+async def test_upload_image_unsupported_type(client, auth_headers):
+    """图片 Content-Type 不在白名单 → 400，detail 带上实际收到的类型"""
+    resp = await client.post(
+        "/image/",
+        files={"file": ("t.bmp", b"BM", "image/bmp")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert "image/bmp" in detail
+    assert "不支持的图片类型" in detail
+
+
+async def test_upload_image_corrupt_content(
+    client, auth_headers, tmp_path, monkeypatch
+):
+    """MIME 合法但内容损坏 → 400，原图半成品已清理、无脏数据入库"""
+    from app.service import image as image_service_module
+    from app.utils import genwebp
+
+    raw, preview = tmp_path / "raw", tmp_path / "preview"
+    raw.mkdir(), preview.mkdir()
+    stub = UploadDir(image_raw=str(raw), image_preview=str(preview), document=str(tmp_path))
+    monkeypatch.setattr(image_service_module, "upload_dir", stub)
+    monkeypatch.setattr(genwebp, "upload_dir", stub)
+
+    resp = await client.post(
+        "/image/",
+        files={"file": ("fake.png", b"not-a-real-png", "image/png")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+    assert "不是有效的图片文件" in resp.json()["detail"]
+    assert list(raw.iterdir()) == []
+    assert (await client.get("/image/")).json()["total"] == 0
+
+
 def _stub_doc_upload_dir(tmp_path, monkeypatch):
     from app.service import document as document_service_module
 

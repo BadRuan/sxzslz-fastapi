@@ -11,7 +11,7 @@ from app.model import Document
 from app.model.document import generate_slug
 from app.schema import DocumentOut, DocumentSort, PageResponse, page_response
 from app.settings import settings, upload_dir
-from app.utils import FileTooLargeError, ensure_dirs, write_upload_stream
+from app.utils import FileTooLargeError, StorageError, ensure_dirs, write_upload_stream
 
 
 class DocumentService:
@@ -36,11 +36,12 @@ class DocumentService:
     ) -> Optional[Document]:
         suffix = Path(filename).suffix
         slugname = generate_slug() + suffix
+        raw_path = path.join(upload_dir.document, slugname)
         # 只在真正落盘时确保目录存在（exist_ok，避免每个请求都建目录）
         ensure_dirs((upload_dir.document,))
         try:
             size = await write_upload_stream(
-                path.join(upload_dir.document, slugname),
+                raw_path,
                 file,
                 max_bytes=settings.MAX_DOCUMENT_SIZE_MB * 1024 * 1024,
             )
@@ -48,8 +49,10 @@ class DocumentService:
             raise ServiceError(
                 f"文件大小超过限制（最大 {settings.MAX_DOCUMENT_SIZE_MB}MB）"
             )
+        except StorageError as exc:
+            raise ServiceError(str(exc)) from exc
         if size == 0:
-            remove(path.join(upload_dir.document, slugname))
+            remove(raw_path)
             raise ServiceError("文件内容为空")
 
         await self.crud.add(

@@ -56,9 +56,13 @@ async def upload_document(
     current_user: User = Depends(get_current_user),
 ):
     if file.content_type not in allow_type.document:
+        received = file.content_type or "未知"
         raise HTTPException(
             status_code=400,
-            detail="仅支持txt、pdf、doc、docx、xls、xlsx、ppt、pptx、zip格式的文件",
+            detail=(
+                f"不支持的文件类型「{received}」，"
+                "仅支持 txt、pdf、doc、docx、xls、xlsx、ppt、pptx、zip 格式"
+            ),
         )
 
     filename = file.filename or "default_name"
