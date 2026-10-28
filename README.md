@@ -16,7 +16,7 @@
 | 时间字段 | `create_at` / `uploaded_at` 为 ISO 8601 **本地时间、无时区后缀**（如 `2026-09-24T11:22:01.682832`），按服务器时区理解（Docker 镜像固定 `Asia/Shanghai`） |
 | 分页 | 所有列表接口返回统一 `PageResponse`；`page` 超出范围时 `data` 为空数组，不报错 |
 | 跨域 | 浏览器联调时前端源必须包含在服务端 `CORS_ORIGINS`（逗号分隔），否则被 CORS 拦截 |
-| 上传大小 | 服务端强制限制：图片默认 **10MB**（`MAX_IMAGE_SIZE_MB`）、文档默认 **50MB**（`MAX_DOCUMENT_SIZE_MB`），超出返回 `400`；空文件返回 `400 文件内容为空`。进度条与取消见 `docs/frontend-api.md` 的 `uploadWithProgress` |
+| 上传大小 | 服务端强制限制：图片默认 **30MB**（`MAX_IMAGE_SIZE_MB`）、文档默认 **50MB**（`MAX_DOCUMENT_SIZE_MB`），超出返回 `400`；空文件返回 `400 文件内容为空`。进度条与取消见 `docs/frontend-api.md` 的 `uploadWithProgress` |
 | 鉴权方式 | 文章/分类/图片本体等 **GET 公开**；图片列表、文档列表/下载、全部写操作需 `Authorization: Bearer <token>`。超管（`is_superuser`，默认账号 `ruanfumin`）可管理全部资源，见[角色权限](#角色权限) |
 
 ## 技术栈
@@ -218,7 +218,7 @@ Content-Type: application/json
 | 400 | 存在无效的分类 | `category_ids` 含不存在的分类 id |
 | 400 | 文章仅支持关联二级分类 | `category_ids` 含一级分类 id |
 | 400 | 字段 title 不能为空 | PATCH 非空字段显式传 `null`（字段名随实际而变） |
-| 400 | 图片大小超过限制（最大 10MB） | 图片超 `MAX_IMAGE_SIZE_MB` |
+| 400 | 图片大小超过限制（最大 30MB） | 图片超 `MAX_IMAGE_SIZE_MB` |
 | 400 | 文件大小超过限制（最大 50MB） | 文档超 `MAX_DOCUMENT_SIZE_MB` |
 | 400 | 文件内容为空 | 上传 0 字节文件 |
 | 400 | 服务器磁盘空间已满，请联系管理员清理后重试 | 落盘 ENOSPC |
@@ -654,7 +654,7 @@ file: <二进制图片>
 
 - 服务端按该 part 的 `Content-Type` 做白名单校验；浏览器上传时请确保 `File.type` 非空（如 `.png` → `image/png`），为空会返回 `400`。
 - 返回的 `slug` **保留原始扩展名**（如 `5894e8c2bc824d0abd7ed539115cb6b9.png`），可直接用于文章的 `cover_img_slug`。
-- 默认大小上限 **10MB**（`MAX_IMAGE_SIZE_MB`），超出或空文件返回 `400`。
+- 默认大小上限 **30MB**（`MAX_IMAGE_SIZE_MB`），超出或空文件返回 `400`。
 - **进度 + 取消**：用 `XMLHttpRequest.upload.onprogress` + `AbortController`，完整封装见 `docs/frontend-api.md` 的 `uploadWithProgress`（图片/文档共用）；中途取消服务端会清理半成品。
 
 **响应** `200`：
@@ -684,7 +684,7 @@ files: <二进制图片2>
 ```
 
 - 单次最多 **20** 个文件（`MAX_BATCH_FILES`），超出返回 `400`。
-- 类型白名单、单文件大小上限（10MB）、空文件校验与 `POST /image/` 一致；先整批校验类型再逐个落盘。
+- 类型白名单、单文件大小上限（30MB）、空文件校验与 `POST /image/` 一致；先整批校验类型再逐个落盘。
 - **整批原子**：任一文件失败 → `400` 整批不生效，不产生部分记录、不残留磁盘文件；`detail` 标明第几个文件（如 `第 2 个文件「bad.png」：...`）。
 
 **响应** `200`：`UploadResult[]`，顺序与请求 `files` 一致：

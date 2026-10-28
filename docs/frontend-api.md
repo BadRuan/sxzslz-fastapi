@@ -32,7 +32,7 @@
 | 请求编码 | JSON 接口：`Content-Type: application/json`；上传接口：`multipart/form-data`。单文件上传字段名**固定为 `file`**；批量上传字段名**固定为 `files`**（同一字段名重复出现） |
 | 时间格式 | `create_at` / `uploaded_at` 为 ISO 8601 **本地时间、无时区后缀**，如 `2026-10-27T13:01:37.520947`，按服务器时区（`Asia/Shanghai`）解析 |
 | 跨域 | 前端源必须包含在服务端环境变量 `CORS_ORIGINS`（逗号分隔），否则浏览器拦截 |
-| 上传大小 | 服务端强制限制：图片默认 ≤ 10MB（`MAX_IMAGE_SIZE_MB`）、文档默认 ≤ 50MB（`MAX_DOCUMENT_SIZE_MB`）；超限返回 `400`。前端仍建议用 `file.size` 预检，避免白传 |
+| 上传大小 | 服务端强制限制：图片默认 ≤ 30MB（`MAX_IMAGE_SIZE_MB`）、文档默认 ≤ 50MB（`MAX_DOCUMENT_SIZE_MB`）；超限返回 `400`。前端仍建议用 `file.size` 预检，避免白传 |
 | 在线调试 | 开发环境访问 `/docs`（Swagger UI）可交互调试全部接口 |
 
 ### 鉴权总览
@@ -274,7 +274,7 @@ function showError(res) {
 | `用户名已存在` / `昵称已存在` | 创建账户时重名 |
 | `不支持的图片类型「{实际Content-Type}」，仅支持 JPG、PNG、GIF、WebP、BMP、TIFF、ICO 格式` | 图片 `Content-Type` 不在白名单（`{}` 内为服务端实际收到的 MIME，为空显示 `未知`） |
 | `不支持的文件类型「{实际Content-Type}」，仅支持 txt、csv、md、rtf、pdf、doc、docx、docm、xls、xlsx、xlsm、ppt、pptx、pptm、odt、ods、odp、zip、7z、rar、gz、tar、epub 格式` | 文档 `Content-Type` 不在白名单 |
-| `图片大小超过限制（最大 10MB）` | 图片超过 `MAX_IMAGE_SIZE_MB` |
+| `图片大小超过限制（最大 30MB）` | 图片超过 `MAX_IMAGE_SIZE_MB` |
 | `文件大小超过限制（最大 50MB）` | 文档超过 `MAX_DOCUMENT_SIZE_MB` |
 | `文件内容为空` | 上传 0 字节文件 |
 | `不是有效的图片文件（内容可能已损坏或格式不符）` | MIME 合法但内容无法被解码（伪图片 / 文件损坏） |
@@ -677,14 +677,14 @@ const list = await get("/articles/");
 
 > 不在白名单（如 `image/heic`、`image/svg+xml`、`image/avif`）→ `400 不支持的图片类型「…」`。HEIC / AVIF / SVG 需额外解码插件，当前未放开。
 
-**大小限制**：默认 **10MB**（服务端环境变量 `MAX_IMAGE_SIZE_MB` 可调）。超出 → `400 图片大小超过限制（最大 10MB）`；空文件 → `400 文件内容为空`；内容损坏 → `400 不是有效的图片文件（内容可能已损坏或格式不符）`。
+**大小限制**：默认 **30MB**（服务端环境变量 `MAX_IMAGE_SIZE_MB` 可调）。超出 → `400 图片大小超过限制（最大 30MB）`；空文件 → `400 文件内容为空`；内容损坏 → `400 不是有效的图片文件（内容可能已损坏或格式不符）`。
 
 **上传失败详情**（均为 `400`，`detail` 为字符串，可直接 toast）：
 
 | detail | 场景 |
 |--------|------|
 | `不支持的图片类型「…」，仅支持 JPG、PNG、GIF、WebP、BMP、TIFF、ICO 格式` | `Content-Type` 不在白名单（含实际收到的 MIME） |
-| `图片大小超过限制（最大 10MB）` | 超过 `MAX_IMAGE_SIZE_MB` |
+| `图片大小超过限制（最大 30MB）` | 超过 `MAX_IMAGE_SIZE_MB` |
 | `文件内容为空` | 0 字节文件 |
 | `不是有效的图片文件（内容可能已损坏或格式不符）` | MIME 合法但 PIL 无法解码 |
 | `服务器磁盘空间已满，请联系管理员清理后重试` | 服务器磁盘满（`ENOSPC`） |
@@ -824,7 +824,7 @@ try {
 
 > **取消语义**：`xhr.abort()` 会立刻断开 HTTP 连接；服务端 `write_upload_stream` 捕获 `ClientDisconnect` 后删除已写入的半成品，**不会**入库、不会在 `uploads/` 残留。取消在 0%~100% 任意时刻生效。
 
-> 前端选择文件后建议先 `file.size` 与允许上限比对（图片 10MB / 文档 50MB），不合法直接提示，避免白传。
+> 前端选择文件后建议先 `file.size` 与允许上限比对（图片 30MB / 文档 50MB），不合法直接提示，避免白传。
 
 > 浏览器上传时确保 `File.type` 非空（如 `.png` → `image/png`），为空会返回 `400`。
 
@@ -865,7 +865,7 @@ files: <二进制图片 2>
 ```
 
 - 单次最多 **20** 个文件（服务端 `MAX_BATCH_FILES`），超出 → `400 单次最多上传 20 个文件`。
-- 先**整批校验类型**，再逐个落盘；单文件大小上限（10MB）、空文件、类型白名单与 `POST /image/` 完全一致。
+- 先**整批校验类型**，再逐个落盘；单文件大小上限（30MB）、空文件、类型白名单与 `POST /image/` 完全一致。
 - **整批原子**：任一文件失败 → `400`，整批不生效——不产生部分图片记录，也不残留磁盘文件。`detail` 会指明第几个文件，如 `第 2 个文件「bad.png」：不是有效的图片文件（内容可能已损坏或格式不符）`。
 
 **成功** `200`：`UploadResult[]`（顺序与请求中 `files` 一致）：
@@ -1320,7 +1320,7 @@ async function deleteDocument(slug) {
 4. 需要取消时用 `AbortController`，服务端会清理半成品。
 
 **Q：上传大文件报 400「文件大小超过限制」？**
-图片默认上限 10MB、文档 50MB（服务端 `MAX_IMAGE_SIZE_MB` / `MAX_DOCUMENT_SIZE_MB` 可调）。前端应在选择文件时先用 `file.size` 预检，给出友好提示，避免白传。
+图片默认上限 30MB、文档 50MB（服务端 `MAX_IMAGE_SIZE_MB` / `MAX_DOCUMENT_SIZE_MB` 可调）。前端应在选择文件时先用 `file.size` 预检，给出友好提示，避免白传。
 
 **Q：上传报 400「服务器磁盘空间已满」/「无写入权限」/「保存到服务器失败」？**
 这是**服务端存储问题**，不是用户文件的问题。前端直接 toast `detail` 即可；磁盘满与权限问题需运维介入（清理 `uploads/` 或修目录权限），用户侧重试通常无效。
