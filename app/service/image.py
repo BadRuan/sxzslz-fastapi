@@ -11,7 +11,7 @@ from app.errors import ServiceError
 from app.model import Image
 from app.model.image import generate_slug
 from app.schema import PageResponse, ImageOut, page_response
-from app.settings import settings, upload_dir
+from app.settings import IMAGE_TYPE_LABEL, allow_type, settings, upload_dir
 from app.utils import (
     FileTooLargeError,
     StorageError,
@@ -20,6 +20,15 @@ from app.utils import (
     storage_error_from,
     write_upload_stream,
 )
+
+
+def ensure_image_type(content_type: str | None) -> None:
+    """图片 MIME 白名单校验（单文件 / 批量共用同一文案）"""
+    received = content_type or "未知"
+    if received not in allow_type.image:
+        raise ServiceError(
+            f"不支持的图片类型「{received}」，仅支持 {IMAGE_TYPE_LABEL} 格式"
+        )
 
 
 class ImageService:
@@ -37,6 +46,7 @@ class ImageService:
     async def add(
         self, filename: str, mime_type: str, file: UploadFile, user_id: int
     ) -> Optional[Image]:
+        ensure_image_type(mime_type)
         suffix = Path(filename).suffix
         slugname = generate_slug() + suffix
         raw_path = path.join(upload_dir.image_raw, slugname)
@@ -76,6 +86,45 @@ class ImageService:
         )
         return await self.crud.get_by_slug(slugname)
 
+    async def add_many(self, files: list[UploadFile], user_id: int) -> list[Image]:
+        """多图同时上传：先整批校验类型，再逐个落盘。
+
+        整批原子：任一文件失败 → 抛 ServiceError（400），本批已落盘的图片文件
+        在异常路径立即清理，DB 记录随请求事务回滚，不留半成品。
+        """
+        if not files:
+            raise ServiceError("请至少选择一个文件")
+        if len(files) > settings.MAX_BATCH_FILES:
+            raise ServiceError(f"单次最多上传 {settings.MAX_BATCH_FILES} 个文件")
+        # 先整批校验类型，避免写入部分文件后才发现第 N 个文件类型非法
+        for index, file in enumerate(files, start=1):
+            try:
+                ensure_image_type(file.content_type)
+            except ServiceError as exc:
+                raise ServiceError(_file_error(index, file, exc)) from exc
+
+        images: list[Image] = []
+        try:
+            for index, file in enumerate(files, start=1):
+                try:
+                    image = await self.add(
+                        filename=file.filename or "default_name",
+                        mime_type=file.content_type or "",
+                        file=file,
+                        user_id=user_id,
+                    )
+                except ServiceError as exc:
+                    raise ServiceError(_file_error(index, file, exc)) from exc
+                if image is None:
+                    raise ServiceError(_file_error(index, file, "上传失败"))
+                images.append(image)
+        except Exception:
+            # 清理本批已写入的文件与记录；DB 由 get_session 统一 rollback
+            for image in images:
+                await self.remove_by_slug(image.slug)
+            raise
+        return images
+
     async def find_by_slug(self, slugname: str) -> Optional[Image]:
         """只读查询，不自增 view（权限校验 / 改名前定位用）"""
         return await self.crud.get_by_slug(slugname)
@@ -107,3 +156,9 @@ class ImageService:
         if new_view is not None:
             image.view = new_view
         return image
+
+
+def _file_error(index: int, file: UploadFile, cause: object) -> str:
+    """批量上传的逐文件错误文案：定位第几个文件、原始文件名与失败原因"""
+    filename = file.filename or "未命名"
+    return f"第 {index} 个文件「{filename}」：{cause}"

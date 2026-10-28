@@ -29,7 +29,7 @@
 | 开发地址 | `http://127.0.0.1:8000`（`uv run fastapi dev`） |
 | 生产地址 | `http://<host>:8088`（Docker / `python main.py`） |
 | 路径尾斜杠 | 集合路径**必须带尾斜杠**：`/articles/`、`/categories/`、`/image/`、`/document/`、`/base/`。不带会返回 `307`，部分客户端对 `307` + POST 请求体处理不一致 |
-| 请求编码 | JSON 接口：`Content-Type: application/json`；上传接口：`multipart/form-data`，文件字段名**固定为 `file`** |
+| 请求编码 | JSON 接口：`Content-Type: application/json`；上传接口：`multipart/form-data`。单文件上传字段名**固定为 `file`**；批量上传字段名**固定为 `files`**（同一字段名重复出现） |
 | 时间格式 | `create_at` / `uploaded_at` 为 ISO 8601 **本地时间、无时区后缀**，如 `2026-10-27T13:01:37.520947`，按服务器时区（`Asia/Shanghai`）解析 |
 | 跨域 | 前端源必须包含在服务端环境变量 `CORS_ORIGINS`（逗号分隔），否则浏览器拦截 |
 | 上传大小 | 服务端强制限制：图片默认 ≤ 10MB（`MAX_IMAGE_SIZE_MB`）、文档默认 ≤ 50MB（`MAX_DOCUMENT_SIZE_MB`）；超限返回 `400`。前端仍建议用 `file.size` 预检，避免白传 |
@@ -813,6 +813,49 @@ try {
 
 > `slug` **保留原始扩展名**，可直接用于文章 `cover_img_slug` 与 `<img src>`。
 
+### POST `/image/batch/`（需登录）
+
+一次提交多张图片（多选上传）。表单字段名为 **`files`**（每个文件一个同名 part）。
+
+**请求**（`multipart/form-data`）：
+
+```
+files: <二进制图片 1>
+files: <二进制图片 2>
+...
+```
+
+- 单次最多 **20** 个文件（服务端 `MAX_BATCH_FILES`），超出 → `400 单次最多上传 20 个文件`。
+- 先**整批校验类型**，再逐个落盘；单文件大小上限（10MB）、空文件、类型白名单与 `POST /image/` 完全一致。
+- **整批原子**：任一文件失败 → `400`，整批不生效——不产生部分图片记录，也不残留磁盘文件。`detail` 会指明第几个文件，如 `第 2 个文件「bad.png」：不是有效的图片文件（内容可能已损坏或格式不符）`。
+
+**成功** `200`：`UploadResult[]`（顺序与请求中 `files` 一致）：
+
+```json
+[
+  {
+    "filename": "a.png",
+    "slug": "5894e8c2bc824d0abd7ed539115cb6b9.png",
+    "content_type": "image/png",
+    "size_bytes": 79,
+    "url": "/image/5894e8c2bc824d0abd7ed539115cb6b9.png",
+    "raw_url": "/image/5894e8c2bc824d0abd7ed539115cb6b9.png?file_type=raw"
+  },
+  {
+    "filename": "b.png",
+    "slug": "6b83f0aa7c1e4aabb9b0c8c4d3f6a111.png",
+    "content_type": "image/png",
+    "size_bytes": 79,
+    "url": "/image/6b83f0aa7c1e4aabb9b0c8c4d3f6a111.png",
+    "raw_url": "/image/6b83f0aa7c1e4aabb9b0c8c4d3f6a111.png?file_type=raw"
+  }
+]
+```
+
+**失败**：`400`（逐文件定位原因）/ `401` 未登录 / `422` 未携带任何文件。
+
+> 前端多选：`<input type="file" multiple>` 后逐个 `form.append("files", file)`；进度可用 `uploadWithProgress` 封装（本模块 POST `/image/` 下方），多 part 时反映总上传进度。
+
 **失败**：`400` 见上方失败详情表；`401` 未登录。
 
 ### GET `/image/`（需登录）
@@ -973,6 +1016,39 @@ const result = await uploadWithProgress(`${BASE}/document/`, file, token, {
 | size_bytes | 落盘字节数 |
 | url | **下载**相对地址（拼 BASE 后 `window.open` 或 fetch 转 blob） |
 | raw_url | 固定 `null`（文档无预览/原图之分） |
+
+### POST `/document/batch/`（需登录）
+
+一次提交多个文件。表单字段名为 **`files`**（每个文件一个同名 part）。
+
+**请求**（`multipart/form-data`）：
+
+```
+files: <二进制文件 1>
+files: <二进制文件 2>
+...
+```
+
+- 单次最多 **20** 个文件（服务端 `MAX_BATCH_FILES`），超出 → `400 单次最多上传 20 个文件`。
+- 先**整批校验类型**，再逐个落盘；单文件大小上限（50MB）、空文件、类型白名单与 `POST /document/` 完全一致。
+- **整批原子**：任一文件失败 → `400`，整批不生效——不产生部分记录，也不残留磁盘文件。`detail` 指明第几个文件，如 `第 2 个文件「empty.txt」：文件内容为空`。
+
+**成功** `200`：`UploadResult[]`（`raw_url` 恒为 `null`，顺序与请求一致）：
+
+```json
+[
+  {
+    "filename": "a.txt",
+    "slug": "ed9134a751e34f0fa50e5f879b92c647.txt",
+    "content_type": "text/plain",
+    "size_bytes": 5,
+    "url": "/document/ed9134a751e34f0fa50e5f879b92c647.txt",
+    "raw_url": null
+  }
+]
+```
+
+**失败**：`400`（逐文件定位原因）/ `401` 未登录 / `422` 未携带任何文件。
 
 **失败**：`400` 见上方失败详情表；`401` 未登录。
 
@@ -1160,6 +1236,8 @@ async function deleteDocument(slug) {
 | size_bytes | int | 落盘字节数 |
 | url | string | 相对访问地址：图片=预览图，文件=下载地址（前端拼 `BASE`） |
 | raw_url | string \| null | 仅图片有值（原图 `?file_type=raw`）；文档为 `null` |
+
+> 批量上传接口 `POST /image/batch/`、`POST /document/batch/` 返回 **`UploadResult[]`**（顺序与请求中 `files` 一致）。
 
 ### ImageOut / DocumentOut（结构一致）
 

@@ -1,16 +1,17 @@
 from enum import Enum
 from os import path
+from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.auth import get_current_user
 from app.database import get_session
-from app.model import User
+from app.model import Document, User
 from app.schema import DocumentOut, DocumentSort, DocumentUpdate, PageResponse, UploadResult
 from app.service import DocumentService
-from app.settings import allow_type, upload_dir, DOCUMENT_TYPE_LABEL
+from app.settings import upload_dir
 
 router = APIRouter()
 
@@ -28,6 +29,18 @@ def _ensure_owner_or_superuser(
 def _visible_user_id(current_user: User) -> int | None:
     """列表可见范围：超管 None=全部；普通用户=仅自己"""
     return None if current_user.is_superuser else current_user.id
+
+
+def _to_upload_result(document: Document) -> UploadResult:
+    """Document 记录 → 上传响应（单文件与批量共用）"""
+    slug = document.slug
+    return UploadResult(
+        filename=document.raw_filename,
+        slug=slug,
+        content_type=document.mime_type,
+        size_bytes=document.size_bytes,
+        url=f"/document/{slug}",
+    )
 
 
 @router.get("/", response_model=PageResponse[DocumentOut])
@@ -53,35 +66,29 @@ async def upload_document(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    if file.content_type not in allow_type.document:
-        received = file.content_type or "未知"
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"不支持的文件类型「{received}」，"
-                f"仅支持 {DOCUMENT_TYPE_LABEL} 格式"
-            ),
-        )
-
-    filename = file.filename or "default_name"
-    service = DocumentService(session)
-    # ServiceError（超限/空文件/落盘失败）由全局 handler 转 400
-    doc = await service.add(
-        filename=filename,
-        mime_type=str(file.content_type),
+    # 类型白名单 / 大小 / 空文件等校验在 service 层，ServiceError 由全局 handler 转 400
+    document = await DocumentService(session).add(
+        filename=file.filename or "default_name",
+        mime_type=file.content_type or "",
         file=file,
         user_id=current_user.id,
     )
-    if doc is None:
+    if document is None:
         raise HTTPException(status_code=400, detail="上传失败")
-    slug = doc.slug
-    return UploadResult(
-        filename=doc.raw_filename,
-        slug=slug,
-        content_type=doc.mime_type,
-        size_bytes=doc.size_bytes,
-        url=f"/document/{slug}",
+    return _to_upload_result(document)
+
+
+@router.post("/batch/", response_model=List[UploadResult])
+async def upload_documents_batch(
+    files: List[UploadFile] = File(..., description="多个文件，表单字段名 files"),
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """多文件同时上传（整批原子）：任一文件失败 → 400 整批不生效，不残留文件与记录"""
+    documents = await DocumentService(session).add_many(
+        files, user_id=current_user.id
     )
+    return [_to_upload_result(document) for document in documents]
 
 
 @router.patch("/{slug}", response_model=DocumentOut)

@@ -1,16 +1,17 @@
 from enum import Enum
 from os import path
+from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.auth import get_current_user
 from app.database import get_session
-from app.model import User
+from app.model import Image, User
 from app.schema import ImageOut, ImageUpdate, PageResponse, UploadResult
 from app.service import ImageService
-from app.settings import allow_type, upload_dir, IMAGE_TYPE_LABEL
+from app.settings import upload_dir
 
 router = APIRouter()
 
@@ -35,6 +36,19 @@ def _visible_user_id(current_user: User) -> int | None:
     return None if current_user.is_superuser else current_user.id
 
 
+def _to_upload_result(image: Image) -> UploadResult:
+    """Image 记录 → 上传响应（单文件与批量共用）"""
+    slug = image.slug
+    return UploadResult(
+        filename=image.raw_filename,
+        slug=slug,
+        content_type=image.mime_type,
+        size_bytes=image.size_bytes,
+        url=f"/image/{slug}",
+        raw_url=f"/image/{slug}?file_type=raw",
+    )
+
+
 @router.get("/", response_model=PageResponse[ImageOut])
 async def get_images(
     page: int = Query(default=1, ge=1, description="页码"),
@@ -54,33 +68,27 @@ async def upload_image(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    if file.content_type not in allow_type.image:
-        received = file.content_type or "未知"
-        raise HTTPException(
-            status_code=400,
-            detail=f"不支持的图片类型「{received}」，仅支持 {IMAGE_TYPE_LABEL} 格式",
-        )
-
-    filename = file.filename or "default_name"
-    service = ImageService(session)
-    # ServiceError（超限/空文件/落盘失败）由全局 handler 转 400
-    image = await service.add(
-        filename=filename,
-        mime_type=str(file.content_type),
+    # 类型白名单 / 大小 / 空文件等校验在 service 层，ServiceError 由全局 handler 转 400
+    image = await ImageService(session).add(
+        filename=file.filename or "default_name",
+        mime_type=file.content_type or "",
         file=file,
         user_id=current_user.id,
     )
     if image is None:
         raise HTTPException(status_code=400, detail="上传失败")
-    slug = image.slug
-    return UploadResult(
-        filename=image.raw_filename,
-        slug=slug,
-        content_type=image.mime_type,
-        size_bytes=image.size_bytes,
-        url=f"/image/{slug}",
-        raw_url=f"/image/{slug}?file_type=raw",
-    )
+    return _to_upload_result(image)
+
+
+@router.post("/batch/", response_model=List[UploadResult])
+async def upload_images_batch(
+    files: List[UploadFile] = File(..., description="多张图片，表单字段名 files"),
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """多图同时上传（整批原子）：任一文件失败 → 400 整批不生效，不残留文件与记录"""
+    images = await ImageService(session).add_many(files, user_id=current_user.id)
+    return [_to_upload_result(image) for image in images]
 
 
 @router.get("/{slug}")

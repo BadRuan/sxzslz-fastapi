@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     # 上传大小上限（MB）：图片 / 文档，超出返回 400
     MAX_IMAGE_SIZE_MB: int = 10
     MAX_DOCUMENT_SIZE_MB: int = 50
+    # 批量上传：单个请求最多文件数（图片 / 文档各自计数）
+    MAX_BATCH_FILES: int = 20
 
     model_config = SettingsConfigDict(
         env_file=".env",

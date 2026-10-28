@@ -12,7 +12,7 @@
 |------|------|
 | 服务地址 | 开发 `http://127.0.0.1:8000`（`fastapi dev`），生产 `http://<host>:8088`（`python main.py` / Docker）。下文路径均相对于该地址 |
 | 路径尾斜杠 | 集合类路径**必须带尾斜杠**（`/articles/`、`/categories/`、`/base/` 等）。不带会返回 `307` 跳转，部分客户端对 `307` + 请求体的处理不一致 |
-| 请求编码 | JSON 接口 `Content-Type: application/json`；上传接口 `multipart/form-data`，表单字段名固定为 `file` |
+| 请求编码 | JSON 接口 `Content-Type: application/json`；上传接口 `multipart/form-data`。单文件上传字段名固定为 `file`；批量上传字段名固定为 `files`（同名 part 重复） |
 | 时间字段 | `create_at` / `uploaded_at` 为 ISO 8601 **本地时间、无时区后缀**（如 `2026-09-24T11:22:01.682832`），按服务器时区理解（Docker 镜像固定 `Asia/Shanghai`） |
 | 分页 | 所有列表接口返回统一 `PageResponse`；`page` 超出范围时 `data` 为空数组，不报错 |
 | 跨域 | 浏览器联调时前端源必须包含在服务端 `CORS_ORIGINS`（逗号分隔），否则被 CORS 拦截 |
@@ -256,11 +256,13 @@ Content-Type: application/json
 | POST | `/articles/{slug}/restore` | ✓ | 恢复回收站文章 | `ArticleDetailOut` |
 | GET | `/image/` | ✓ | 图片分页列表（超管全部 / 普通仅自己） | `PageResponse[ImageOut]` |
 | POST | `/image/` | ✓ | 上传图片（支持进度+取消） | `UploadResult` |
+| POST | `/image/batch/` | ✓ | 批量上传图片（多文件同时，整批原子） | `UploadResult[]` |
 | GET | `/image/{slug}` | ✗ | 获取图片本体（默认预览图，公开） | 二进制流 |
 | PATCH | `/image/{slug}` | ✓ | 改图片展示名（本人或超管） | `ImageOut` |
 | DELETE | `/image/{slug}` | ✓ | 删除图片（本人或超管，清磁盘） | 204 空 |
 | GET | `/document/` | ✓ | 文件分页列表（超管全部 / 普通仅自己） | `PageResponse[DocumentOut]` |
 | POST | `/document/` | ✓ | 上传文件（支持进度+取消） | `UploadResult` |
+| POST | `/document/batch/` | ✓ | 批量上传文件（多文件同时，整批原子） | `UploadResult[]` |
 | PATCH | `/document/{slug}` | ✓ | 改文件展示名（本人或超管） | `DocumentOut` |
 | DELETE | `/document/{slug}` | ✓ | 删除文件（本人或超管，清磁盘） | 204 空 |
 | GET | `/document/{slug}` | ✓ | 下载文件（本人或超管） | 二进制流 |
@@ -627,6 +629,38 @@ file: <二进制图片>
 
 > `url` 为预览图相对地址，`raw_url` 为原图地址；前端拼 `BASE` 后可直接 `<img src>`。
 
+### POST `/image/batch/`
+
+一次上传多张图片，表单字段名 **`files`**（每个文件一个同名 part）。**需携带 token**（未登录返回 `401`）。
+
+**请求**（`multipart/form-data`）：
+
+```
+files: <二进制图片1>
+files: <二进制图片2>
+```
+
+- 单次最多 **20** 个文件（`MAX_BATCH_FILES`），超出返回 `400`。
+- 类型白名单、单文件大小上限（10MB）、空文件校验与 `POST /image/` 一致；先整批校验类型再逐个落盘。
+- **整批原子**：任一文件失败 → `400` 整批不生效，不产生部分记录、不残留磁盘文件；`detail` 标明第几个文件（如 `第 2 个文件「bad.png」：...`）。
+
+**响应** `200`：`UploadResult[]`，顺序与请求 `files` 一致：
+
+```json
+[
+  {
+    "filename": "a.png",
+    "slug": "5894e8c2bc824d0abd7ed539115cb6b9.png",
+    "content_type": "image/png",
+    "size_bytes": 102400,
+    "url": "/image/5894e8c2bc824d0abd7ed539115cb6b9.png",
+    "raw_url": "/image/5894e8c2bc824d0abd7ed539115cb6b9.png?file_type=raw"
+  }
+]
+```
+
+**失败**：`400`（逐文件原因）/ `401` 未登录 / `422` 未携带文件。
+
 **失败**：`400` 见 `docs/frontend-api.md` 上传失败详情表；`401` 未登录。
 
 ### GET `/image/`
@@ -734,6 +768,38 @@ file: <二进制文件>
 ```
 
 > `url` 为下载相对地址；`raw_url` 固定 `null`（文档无预览/原图之分）。
+
+### POST `/document/batch/`
+
+一次上传多个文件，表单字段名 **`files`**（每个文件一个同名 part）。**需携带 token**（未登录返回 `401`）。
+
+**请求**（`multipart/form-data`）：
+
+```
+files: <二进制文件1>
+files: <二进制文件2>
+```
+
+- 单次最多 **20** 个文件（`MAX_BATCH_FILES`），超出返回 `400`。
+- 类型白名单、单文件大小上限（50MB）、空文件校验与 `POST /document/` 一致；先整批校验类型再逐个落盘。
+- **整批原子**：任一文件失败 → `400` 整批不生效，不产生部分记录、不残留磁盘文件；`detail` 标明第几个文件。
+
+**响应** `200`：`UploadResult[]`（`raw_url` 恒为 `null`），顺序与请求 `files` 一致：
+
+```json
+[
+  {
+    "filename": "报告.pdf",
+    "slug": "a1b2c3d4e5f6g7h8.pdf",
+    "content_type": "application/pdf",
+    "size_bytes": 20480,
+    "url": "/document/a1b2c3d4e5f6g7h8.pdf",
+    "raw_url": null
+  }
+]
+```
+
+**失败**：`400`（逐文件原因）/ `401` 未登录 / `422` 未携带文件。
 
 **失败**：`400` 格式不支持 / 超过大小限制 / 空文件 / 上传失败
 

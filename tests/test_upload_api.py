@@ -512,3 +512,160 @@ async def test_patch_document_forbidden_and_errors(
             f"/document/{slug}", json={"raw_filename": ""}, headers=auth_headers
         )
     ).status_code == 422
+
+
+# ---------- 批量上传：图片 / 文档 ----------
+
+
+def _stub_image_upload_dirs(tmp_path, monkeypatch):
+    from app.service import image as image_service_module
+
+    raw, preview = tmp_path / "raw", tmp_path / "preview"
+    raw.mkdir(), preview.mkdir()
+    stub = UploadDir(
+        image_raw=str(raw),
+        image_preview=str(preview),
+        document=str(tmp_path / "doc"),
+    )
+    monkeypatch.setattr(image_service_module, "upload_dir", stub)
+    monkeypatch.setattr(genwebp, "upload_dir", stub)
+    return stub
+
+
+async def test_upload_images_batch_success(client, auth_headers, tmp_path, monkeypatch):
+    """多张图片一次提交：返回数组、全部落盘、列表 total 正确"""
+    _stub_image_upload_dirs(tmp_path, monkeypatch)
+    resp = await client.post(
+        "/image/batch/",
+        files=[
+            ("files", ("a.png", _png_bytes(), "image/png")),
+            ("files", ("b.png", _png_bytes(), "image/png")),
+        ],
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [item["filename"] for item in body] == ["a.png", "b.png"]
+    for item in body:
+        assert item["url"] == f"/image/{item['slug']}"
+        assert item["raw_url"] == f"/image/{item['slug']}?file_type=raw"
+        assert (tmp_path / "raw" / item["slug"]).is_file()
+    assert (await client.get("/image/", headers=auth_headers)).json()["total"] == 2
+
+
+async def test_upload_images_batch_atomic_on_corrupt_file(
+    client, auth_headers, tmp_path, monkeypatch
+):
+    """批量中任一图片损坏 → 400 整批回滚：无记录、无残留文件"""
+    _stub_image_upload_dirs(tmp_path, monkeypatch)
+    resp = await client.post(
+        "/image/batch/",
+        files=[
+            ("files", ("ok.png", _png_bytes(), "image/png")),
+            ("files", ("bad.png", b"not-a-real-png", "image/png")),
+        ],
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+    assert "第 2 个文件" in resp.json()["detail"]
+    assert list((tmp_path / "raw").iterdir()) == []
+    assert list((tmp_path / "preview").iterdir()) == []
+    assert (await client.get("/image/", headers=auth_headers)).json()["total"] == 0
+
+
+async def test_upload_batch_type_check_before_write(
+    client, auth_headers, tmp_path, monkeypatch
+):
+    """批量类型校验先于落盘：第 2 个类型非法时第 1 个也未写入"""
+    _stub_image_upload_dirs(tmp_path, monkeypatch)
+    resp = await client.post(
+        "/image/batch/",
+        files=[
+            ("files", ("ok.png", _png_bytes(), "image/png")),
+            ("files", ("bad.heic", b"heic", "image/heic")),
+        ],
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert "第 2 个文件" in detail and "image/heic" in detail
+    assert list((tmp_path / "raw").iterdir()) == []
+    assert (await client.get("/image/", headers=auth_headers)).json()["total"] == 0
+
+
+async def test_upload_documents_batch_success(
+    client, auth_headers, tmp_path, monkeypatch
+):
+    """多文件一次提交：返回数组、全部落盘、列表 total 正确"""
+    doc_dir = _stub_doc_upload_dir(tmp_path, monkeypatch)
+    resp = await client.post(
+        "/document/batch/",
+        files=[
+            ("files", ("a.txt", b"hello", "text/plain")),
+            ("files", ("b.csv", b"a,b\n", "text/csv")),
+        ],
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [item["filename"] for item in body] == ["a.txt", "b.csv"]
+    for item in body:
+        assert item["url"] == f"/document/{item['slug']}"
+        assert item["raw_url"] is None
+        assert (doc_dir / item["slug"]).is_file()
+    assert (await client.get("/document/", headers=auth_headers)).json()["total"] == 2
+
+
+async def test_upload_documents_batch_atomic_on_empty_file(
+    client, auth_headers, tmp_path, monkeypatch
+):
+    """批量中任一文件为空 → 400 整批回滚：无记录、无残留文件"""
+    doc_dir = _stub_doc_upload_dir(tmp_path, monkeypatch)
+    resp = await client.post(
+        "/document/batch/",
+        files=[
+            ("files", ("ok.txt", b"hello", "text/plain")),
+            ("files", ("empty.txt", b"", "text/plain")),
+        ],
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+    assert "第 2 个文件" in resp.json()["detail"]
+    assert list(doc_dir.iterdir()) == []
+    assert (await client.get("/document/", headers=auth_headers)).json()["total"] == 0
+
+
+async def test_upload_batch_requires_auth(client):
+    """批量上传同样需登录"""
+    assert (
+        await client.post(
+            "/image/batch/",
+            files=[("files", ("a.png", _png_bytes(), "image/png"))],
+        )
+    ).status_code == 401
+    assert (
+        await client.post(
+            "/document/batch/",
+            files=[("files", ("a.txt", b"hi", "text/plain"))],
+        )
+    ).status_code == 401
+
+
+async def test_upload_batch_max_files_limit(
+    client, auth_headers, tmp_path, monkeypatch
+):
+    """超过单次文件数上限 → 400"""
+    from app.settings import settings
+
+    monkeypatch.setattr(settings, "MAX_BATCH_FILES", 1)
+    _stub_doc_upload_dir(tmp_path, monkeypatch)
+    resp = await client.post(
+        "/document/batch/",
+        files=[
+            ("files", ("a.txt", b"a", "text/plain")),
+            ("files", ("b.txt", b"b", "text/plain")),
+        ],
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+    assert "最多上传 1 个文件" in resp.json()["detail"]
