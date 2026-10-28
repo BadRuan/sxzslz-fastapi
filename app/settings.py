@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     MAX_DOCUMENT_SIZE_MB: int = 50
     # 批量上传：单个请求最多文件数（图片 / 文档各自计数）
     MAX_BATCH_FILES: int = 20
+    # 超管创建普通账户 / 重置普通账户密码时使用的默认密码
+    DEFAULT_USER_PASSWORD: str = "abc123"
 
     model_config = SettingsConfigDict(
         env_file=".env",

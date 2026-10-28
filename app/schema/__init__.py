@@ -28,7 +28,7 @@ from app.schema.file import (
     ImageUpdate,
     UploadResult,
 )
-from app.schema.user import BaseInfoOut, UserOut
+from app.schema.user import BaseInfoOut, PasswordResetOut, UserCreate, UserOut
 
 __all__ = [
     "ArticleBatchCategoryIn",
@@ -52,8 +52,10 @@ __all__ = [
     "PageResponse",
     "PasswordChangeOut",
     "PasswordChangeRequest",
+    "PasswordResetOut",
     "TokenOut",
     "UploadResult",
+    "UserCreate",
     "UserOut",
     "page_response",
 ]

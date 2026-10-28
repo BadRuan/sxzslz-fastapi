@@ -15,6 +15,7 @@ from app.routers import (
     category_router,
     document_router,
     image_router,
+    user_router,
 )
 from app.settings import cors_origins
 
@@ -69,6 +70,7 @@ for router, prefix, tags in [
     (article_router, "/articles", ["文章模块"]),
     (image_router, "/image", ["图片模块"]),
     (document_router, "/document", ["文件模块"]),
+    (user_router, "/users", ["用户账户模块"]),
 ]:
     app.include_router(router, prefix=prefix, tags=tags)
 

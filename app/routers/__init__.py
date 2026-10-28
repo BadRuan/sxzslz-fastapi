@@ -4,6 +4,7 @@ from .category import router as category_router
 from .image import router as image_router
 from .document import router as document_router
 from .article import router as article_router
+from .user import router as user_router
 
 __all__ = [
     'auth_router',
@@ -11,5 +12,6 @@ __all__ = [
     'category_router',
     'image_router',
     'document_router',
-    'article_router'
+    'article_router',
+    'user_router'
 ]

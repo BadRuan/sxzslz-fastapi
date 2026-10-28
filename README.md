@@ -88,7 +88,7 @@ uv run pytest tests/test_auth_api.py::test_login # 单个用例
 
 | 角色 | 判定 | 能力 |
 |------|------|------|
-| 超级管理员 | `user.is_superuser = true`（默认账号 `ruanfumin`；存量库执行 `uv run python scripts/migrate_add_is_superuser.py`） | 任意文章可改/删/恢复，并可指定作者 `user_id` 与发布时间 `create_at`；可见/可改/可删全部图片与文档 |
+| 超级管理员 | `user.is_superuser = true`（默认账号 `ruanfumin`；存量库执行 `uv run python scripts/migrate_add_is_superuser.py`） | 任意文章可改/删/恢复，并可指定作者 `user_id` 与发布时间 `create_at`；可见/可改/可删全部图片与文档；可创建/删除普通账户、重置普通账户密码为 `abc123` |
 | 普通用户 | 其余账号 | 仅操作**自己**的文章与上传文件；列表只见自己上传的；`view_count` / `like_count` 不可 PATCH |
 
 前端可从 `/auth/me` 或 `/base/` 的 `user[].is_superuser` 判断角色，控制管理入口显隐。
@@ -233,6 +233,46 @@ Content-Type: application/json
 
 ---
 
+## 用户账户管理 `/users`
+
+> 仅超级管理员（`is_superuser=true`）可调用；普通用户 → `403 仅超级管理员可管理用户账户`。无注册接口，普通账户统一由超管创建。
+
+### POST `/users/`
+
+创建普通账户。**仅超管**。密码可省略，缺省为 `abc123`（`DEFAULT_USER_PASSWORD`）。
+
+```json
+{"username": "zhangsan", "nickname": "张三", "password": "abc123"}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| username | string | ✓ | 登录名，唯一 |
+| nickname | string | ✓ | 展示名，唯一 |
+| password | string | ✗ | 至少 6 位；缺省 `abc123` |
+
+**响应** `201`：`UserOut`（`{id, slug, nickname, is_superuser: false}`）。`is_superuser` 不可通过该接口设置。
+
+**失败**：`400 用户名已存在` / `400 昵称已存在`；`403` 非超管；`422` 字段缺失或密码不足 6 位。
+
+### POST `/users/{id}/reset-password`
+
+把**普通账户**密码重置为 `abc123`（`DEFAULT_USER_PASSWORD`），**仅超管**。
+
+**响应** `200`：`{"detail": "密码已重置为 abc123"}`。重置后旧密码立即失效。
+
+**失败**：`403 不能重置超级管理员密码`；`404 用户不存在`；`403` 非超管。
+
+### DELETE `/users/{id}`
+
+删除**普通账户**，**仅超管**。**硬删除**：账户行删除后无法登录（已签发 token 也会因「用户不存在」失效）。
+
+> 该账户已发布的文章、已上传的图片/文档**保留**，`user` 关联变为 `null`（无数据库外键）；如需清理内容请先单独删除。
+
+**响应** `204` 空。**失败**：`403 不能删除超级管理员账户`；`404 用户不存在`；`403` 非超管。
+
+---
+
 ## 接口总览
 
 | 方法 | 路径 | 鉴权 | 说明 | 响应模型 |
@@ -240,6 +280,9 @@ Content-Type: application/json
 | POST | `/auth/login` | ✗ | 登录，返回 JWT | `TokenOut` |
 | GET | `/auth/me` | ✓ | 获取当前登录用户 | `UserOut` |
 | PUT | `/auth/password` | ✓ | 修改当前用户密码 | `{"detail": ...}` |
+| POST | `/users/` | ✓ | 创建普通账户（仅超管，密码缺省 abc123） | `UserOut` |
+| POST | `/users/{id}/reset-password` | ✓ | 重置普通账户密码为 abc123（仅超管） | `{"detail": ...}` |
+| DELETE | `/users/{id}` | ✓ | 删除普通账户（仅超管，内容保留） | 204 空 |
 | GET | `/base/` | ✗ | 首页基础信息（分类树 + 用户列表） | `BaseInfoOut` |
 | GET | `/categories/` | ✗ | 分类列表（扁平） | `CategoryOut[]` |
 | POST | `/categories/` | ✓ | 创建分类 | `CategoryOut` |
