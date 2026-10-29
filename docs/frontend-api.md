@@ -445,7 +445,7 @@ function showError(res) {
 |--------|----------|
 | 匿名（无 `Authorization` 头） | 公开全量（前台列表，行为不变） |
 | 普通用户（带 token） | **固定只返回自己**的文章，`user_id` 参数被忽略；`is_deleted=true` 同样只枚举自己的回收站 |
-| 超管（带 token） | 全量，`user_id` 过滤与回收站照常使用 |
+| 超管（带 token） | 全量，`user_id` 过滤、`is_deleted` 回收站、`sort` 排序均照常使用 |
 
 > 带非法/过期 token → `401`（不静默降级为匿名，避免权限收敛被绕过）。
 

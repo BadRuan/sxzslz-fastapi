@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.settings import settings
 from app.dao import ArticleCrud
@@ -39,10 +39,14 @@ class ArticleService:
         category_id: Optional[int] = None,
         user_id: Optional[int] = None,
         is_deleted: bool = False,
+        order_by_field: Literal["id", "create_at"] = "id",
     ) -> PageResponse[ArticleOut]:
-        """is_deleted=True 走后台回收站（只返回已删除文章）"""
+        """is_deleted=True 走后台回收站（只返回已删除文章）。
+
+        order_by_field：'id'（默认，按发布 id 倒序）/ 'create_at'（按发布时间倒序）。
+        """
         items, total = await self.crud.list_paginated(
-            page, page_size, category_id, user_id, is_deleted
+            page, page_size, category_id, user_id, is_deleted, order_by_field
         )
         return page_response(
             [ArticleOut.model_validate(a) for a in items], total, page, page_size

@@ -457,7 +457,8 @@ Content-Type: application/json
 | page | int | 1 | 页码，从 1 开始 |
 | page_size | int | 20 | 每页条数（1 ~ 100） |
 | category_id | int | 无 | 按**二级分类** id 精确过滤（不聚合一级分类下的子分类） |
-| user_id | int | 无 | 按作者用户 id 过滤（后台展示登录账户的文章） |
+| user_id | int | 无 | 按作者用户 id 过滤（后台展示登录账户的文章；**仅超管生效**，普通用户被强制收敛为本人） |
+| sort | `id` \| `create_at` | `id` | 排序字段（倒序）：`id`=发布 id（默认，最新创建在前）；`create_at`=发布时间（最新发布在前） |
 | is_deleted | bool | false | `false` 只返回未删除文章；`true` 只返回回收站文章（后台用） |
 
 示例：`GET /articles/?page=2&page_size=10&category_id=3&user_id=1`

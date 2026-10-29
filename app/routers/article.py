@@ -9,10 +9,11 @@ from app.schema import (
     ArticleBatchCategoryIn,
     ArticleBatchCategoryOut,
     ArticleCreate,
-    ArticleUpdate,
     ArticleOut,
+    ArticleUpdate,
     ArticleDetailOut,
     ArticleLikeOut,
+    ArticleSort,
     PageResponse,
 )
 
@@ -76,11 +77,17 @@ async def list_articles(
         default=False,
         description="false（默认）只返回未删除文章；true 只返回回收站文章（后台）",
     ),
+    sort: ArticleSort = Query(
+        default=ArticleSort.id,
+        description="排序字段（倒序）：id=发布 id（默认）/ create_at=发布时间",
+    ),
     session: AsyncSession = Depends(get_session),
     current_user: Optional[User] = Depends(get_optional_user),
 ):
     """可见范围：匿名=公开全量；普通用户=固定只返回自己的文章（user_id 参数被忽略）；
-    超管=全部（可按 user_id 过滤 / is_deleted 查回收站）"""
+    超管=全部（可按 user_id 过滤 / is_deleted 查回收站）。
+    排序均为倒序（最新的在前）：id 倒序=最新发布在前；create_at 倒序=按发布时间最近在前。
+    """
     service = ArticleService(session)
     return await service.list_paginated(
         page,
@@ -88,6 +95,7 @@ async def list_articles(
         category_id,
         _resolve_visible_user_id(user_id, current_user),
         is_deleted,
+        order_by_field=sort.value,
     )
 
 

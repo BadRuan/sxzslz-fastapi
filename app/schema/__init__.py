@@ -5,6 +5,7 @@ from app.schema.article import (
     ArticleDetailOut,
     ArticleLikeOut,
     ArticleOut,
+    ArticleSort,
     ArticleUpdate,
 )
 from app.schema.auth import (
@@ -37,6 +38,7 @@ __all__ = [
     "ArticleDetailOut",
     "ArticleLikeOut",
     "ArticleOut",
+    "ArticleSort",
     "ArticleUpdate",
     "BaseInfoOut",
     "CategoryCreate",
