@@ -7,9 +7,9 @@ from app.settings import UploadDir
 from app.utils import genwebp
 
 
-def _png_bytes() -> bytes:
+def _png_bytes(color=(0, 128, 255)) -> bytes:
     buf = io.BytesIO()
-    Image.new("RGB", (8, 8), (0, 128, 255)).save(buf, format="PNG")
+    Image.new("RGB", (8, 8), color).save(buf, format="PNG")
     return buf.getvalue()
 
 
@@ -539,7 +539,7 @@ async def test_upload_images_batch_success(client, auth_headers, tmp_path, monke
         "/image/batch/",
         files=[
             ("files", ("a.png", _png_bytes(), "image/png")),
-            ("files", ("b.png", _png_bytes(), "image/png")),
+            ("files", ("b.png", _png_bytes(color=(255, 0, 0)), "image/png")),
         ],
         headers=auth_headers,
     )

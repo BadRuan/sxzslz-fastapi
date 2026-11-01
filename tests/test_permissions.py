@@ -15,9 +15,9 @@ async def _create_owned_article(session, owner: User, title: str = "归属文章
     return await service.create(ArticleCreate(title=title), user_id=owner.id)
 
 
-def _png_bytes() -> bytes:
+def _png_bytes(color=(0, 128, 255)) -> bytes:
     buf = io.BytesIO()
-    PILImage.new("RGB", (8, 8), (0, 128, 255)).save(buf, format="PNG")
+    PILImage.new("RGB", (8, 8), color).save(buf, format="PNG")
     return buf.getvalue()
 
 
@@ -164,9 +164,9 @@ def _stub_upload_dirs(tmp_path, monkeypatch):
     return stub
 
 
-async def _upload_image(client, headers, name="t.png"):
+async def _upload_image(client, headers, name="t.png", color=(0, 128, 255)):
     resp = await client.post(
-        "/image/", files={"file": (name, _png_bytes(), "image/png")}, headers=headers
+        "/image/", files={"file": (name, _png_bytes(color=color), "image/png")}, headers=headers
     )
     assert resp.status_code == 200
     return resp.json()
@@ -193,8 +193,8 @@ async def test_image_document_list_scoped_by_owner(
 ):
     """普通用户只看到自己的上传；超管看到全部"""
     _stub_upload_dirs(tmp_path, monkeypatch)
-    mine_img = await _upload_image(client, auth_headers, "mine.png")
-    await _upload_image(client, superadmin_headers, "super.png")
+    mine_img = await _upload_image(client, auth_headers, "mine.png", color=(0, 128, 255))
+    await _upload_image(client, superadmin_headers, "super.png", color=(255, 0, 0))
     mine_doc = await _upload_doc(client, auth_headers, "mine.txt")
     await _upload_doc(client, superadmin_headers, "super.txt")
 
