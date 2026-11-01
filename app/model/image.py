@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from uuid import uuid4
 from sqlalchemy.orm import foreign
 from sqlmodel import Field, Relationship, SQLModel
@@ -20,6 +20,8 @@ class Image(SQLModel, table=True):
     raw_filename: str = Field(max_length=255)
     mime_type: str = Field(max_length=50)
     size_bytes: int
+    # 图片内容 MD5，用于上传去重（相同内容不重复落盘）
+    md5: Optional[str] = Field(default=None, max_length=32, index=True)
     # 业务层关联上传者，无数据库外键；必填，由上传接口写入当前登录用户
     user_id: int
     view: int = Field(default=0)

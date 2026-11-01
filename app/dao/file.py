@@ -55,7 +55,7 @@ class FileCrud(Generic[ModelT]):
         return result.first()
 
     async def add(
-        self, raw_filename: str, slug: str, mime_type: str, size: int, user_id: int
+        self, raw_filename: str, slug: str, mime_type: str, size: int, user_id: int, md5: str | None = None
     ) -> ModelT:
         record = self.model(  # type: ignore[call-arg]
             raw_filename=raw_filename,
@@ -63,6 +63,7 @@ class FileCrud(Generic[ModelT]):
             mime_type=mime_type,
             size_bytes=size,
             user_id=user_id,
+            md5=md5,
         )
         self.session.add(record)
         await self.session.flush()

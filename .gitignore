@@ -15,4 +15,4 @@ wheels/
 .mimocode/
 .ruff_cache/
 uploads/
-logs/
+logs/.dsh/

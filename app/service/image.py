@@ -1,3 +1,4 @@
+import hashlib
 from os import path, remove
 from pathlib import Path
 from typing import Optional
@@ -64,6 +65,16 @@ class ImageService:
             remove(raw_path)
             raise ServiceError("文件内容为空")
 
+        # 计算原图 MD5，用于内容去重（在生成预览前，避免重复工作）
+        md5_value = _md5_file(raw_path)
+
+        # 已存在相同内容的图片：不重复落盘，复用已有记录
+        existing = await self.crud.get_by_md5(md5_value)
+        if existing is not None:
+            if path.isfile(raw_path):
+                remove(raw_path)
+            return existing
+
         # 生成预览图和缩略图（PIL 在线程池执行）；失败清理原图，不残留半成品
         try:
             await generate_webp_images(slugname)
@@ -83,6 +94,7 @@ class ImageService:
             mime_type=mime_type,
             size=size,
             user_id=user_id,
+            md5=md5_value,
         )
         return await self.crud.get_by_slug(slugname)
 
@@ -162,3 +174,11 @@ def _file_error(index: int, file: UploadFile, cause: object) -> str:
     """批量上传的逐文件错误文案：定位第几个文件、原始文件名与失败原因"""
     filename = file.filename or "未命名"
     return f"第 {index} 个文件「{filename}」：{cause}"
+
+
+def _md5_file(filepath: str) -> str:
+    h = hashlib.md5()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()

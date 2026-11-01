@@ -35,9 +35,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_origins = cors_origins()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins(),  # 来自 settings.CORS_ORIGINS，不再全开
+    # "*" 表示允许所有来源（含局域网 IP），配合 allow_credentials 使用 regex 反射 Origin
+    allow_origins=[] if "*" in _origins else _origins,
+    allow_origin_regex=".*" if "*" in _origins else None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

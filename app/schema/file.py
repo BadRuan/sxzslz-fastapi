@@ -21,6 +21,7 @@ class ImageOut(BaseModel):
     raw_filename: str
     mime_type: str
     size_bytes: int
+    md5: str | None = None
     user_id: int
     view: int
     uploaded_at: datetime
