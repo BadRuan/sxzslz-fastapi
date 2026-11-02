@@ -136,18 +136,14 @@ async def delete_document(
 async def get_document(
     slug: str,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
 ):
-    """下载文件：仅上传者本人或超管（普通用户不能下他人文件）"""
+    """下载文件：公开访问（无需鉴权）"""
     service = DocumentService(session)
     doc = await service.get_by_slug(slug)
     if doc is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Document not found"
         )
-    _ensure_owner_or_superuser(
-        doc.user_id, current_user, forbidden_detail="无权限查看该文件"
-    )
     return FileResponse(
         filename=doc.raw_filename,
         path=path.join(upload_dir.document, slug),

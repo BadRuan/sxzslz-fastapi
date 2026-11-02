@@ -220,15 +220,13 @@ async def test_document_download_scoped(
     _stub_upload_dirs(tmp_path, monkeypatch)
     other_doc = await _upload_doc(client, superadmin_headers, "s.txt")
 
-    assert (
-        await client.get(f"/document/{other_doc['slug']}", headers=auth_headers)
-    ).status_code == 403
-    assert (
-        await client.get(f"/document/{other_doc['slug']}", headers=superadmin_headers)
-    ).status_code == 200
+    # 下载公开：无需鉴权即可下载
     assert (
         await client.get(f"/document/{other_doc['slug']}")
-    ).status_code == 401
+    ).status_code == 200
+    assert (
+        await client.get(f"/document/{other_doc['slug']}", headers=auth_headers)
+    ).status_code == 200
 
 
 async def test_image_public_get_still_open(
