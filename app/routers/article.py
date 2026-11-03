@@ -41,6 +41,16 @@ def _resolve_visible_user_id(
     return current_user.id
 
 
+def _resolve_sort(
+    requested_sort: Optional[ArticleSort], current_user: Optional[User]
+) -> ArticleSort:
+    """未显式传 sort 时按调用者取默认：匿名（前台新闻列表）按发布时间倒序；
+    登录态（后台管理）按发布 id 倒序。显式传参优先。"""
+    if requested_sort is not None:
+        return requested_sort
+    return ArticleSort.create_at if current_user is None else ArticleSort.id
+
+
 @router.post("/", response_model=ArticleDetailOut, status_code=status.HTTP_201_CREATED)
 async def create_article(
     data: ArticleCreate,
@@ -77,17 +87,21 @@ async def list_articles(
         default=False,
         description="false（默认）只返回未删除文章；true 只返回回收站文章（后台）",
     ),
-    sort: ArticleSort = Query(
-        default=ArticleSort.create_at,
-        description="排序字段（倒序）：create_at=发布时间（默认）/ id=发布 id",
+    sort: Optional[ArticleSort] = Query(
+        default=None,
+        description=(
+            "排序字段（均倒序）：create_at=发布时间 / id=发布 id；"
+            "不传时匿名默认 create_at、登录（后台管理）默认 id"
+        ),
     ),
     session: AsyncSession = Depends(get_session),
     current_user: Optional[User] = Depends(get_optional_user),
 ):
     """可见范围：匿名=公开全量；普通用户=固定只返回自己的文章（user_id 参数被忽略）；
     超管=全部（可按 user_id 过滤 / is_deleted 查回收站）。
-    默认按 create_at 倒序（发布时间最新的在前）；显式传 sort=id 可切换为按发布 id 倒序。
+    排序：不传 sort 时，匿名（前台）默认 create_at 发布时间倒序；登录（后台）默认 id 倒序。
     """
+    resolved_sort = _resolve_sort(sort, current_user)
     service = ArticleService(session)
     return await service.list_paginated(
         page,
@@ -95,7 +109,7 @@ async def list_articles(
         category_id,
         _resolve_visible_user_id(user_id, current_user),
         is_deleted,
-        order_by_field=sort.value,
+        order_by_field=resolved_sort.value,
     )
 
 

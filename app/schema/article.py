@@ -9,10 +9,10 @@ from app.schema.user import UserOut
 
 
 class ArticleSort(str, Enum):
-    """GET /articles/ 排序字段（均为倒序）"""
+    """GET /articles/ 排序字段（均为倒序）；未传时匿名默认 create_at、登录默认 id"""
 
-    create_at = "create_at"  # 按发布时间倒序（默认，最新发布在前）
-    id = "id"  # 按发布 id 倒序（与 create_at 通常一致，超管改发布时间后可能不同）
+    create_at = "create_at"  # 按发布时间倒序（前台新闻列表默认）
+    id = "id"  # 按发布 id 倒序（后台管理默认，最新创建在前）
 
 
 class ArticleOut(BaseModel):
