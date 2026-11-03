@@ -437,13 +437,13 @@ function showError(res) {
 
 ### GET `/articles/`
 
-分页列表，按 `id` 倒序（最新创建在前）。
+分页列表，**默认按 `create_at`（发布时间）倒序，最新发布的排最前**。
 
 **可见范围**（按调用者身份收敛）：
 
 | 调用者 | 返回范围 |
 |--------|----------|
-| 匿名（无 `Authorization` 头） | 公开全量（前台列表，行为不变） |
+| 匿名（无 `Authorization` 头） | 公开全量（前台列表） |
 | 普通用户（带 token） | **固定只返回自己**的文章，`user_id` 参数被忽略；`is_deleted=true` 同样只枚举自己的回收站 |
 | 超管（带 token） | 全量，`user_id` 过滤、`is_deleted` 回收站、`sort` 排序均照常使用 |
 
@@ -457,9 +457,12 @@ function showError(res) {
 | page_size | int | 20 | 每页条数（1~100） |
 | category_id | int | 无 | 按**二级分类** id 精确过滤（不聚合一级分类下的子分类） |
 | user_id | int | 无 | 按作者过滤（**仅超管生效**；普通用户被强制收敛为本人） |
+| sort | `create_at` \| `id` | `create_at` | 排序字段（均倒序）：`create_at`=发布时间（默认，最新发布在前）；`id`=发布 id（最新创建在前） |
 | is_deleted | bool | false | `false` 正常列表；`true` 回收站（后台用） |
 
 示例：`GET /articles/?page=1&page_size=20&category_id=2`
+
+> 默认按发布时间倒序；需要按创建顺序（id 倒序）时显式传 `sort=id`。`create_at` 相同时按 `id` 倒序兜底，翻页顺序稳定。
 
 **响应** `200`（列表**不含 `content`**）：
 

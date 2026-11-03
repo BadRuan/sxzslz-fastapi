@@ -11,8 +11,8 @@ from app.schema.user import UserOut
 class ArticleSort(str, Enum):
     """GET /articles/ 排序字段（均为倒序）"""
 
-    id = "id"  # 按发布 id 倒序（默认，最新创建在前）
-    create_at = "create_at"  # 按发布时间倒序（最新发布在前，与 id 通常一致但可不同）
+    create_at = "create_at"  # 按发布时间倒序（默认，最新发布在前）
+    id = "id"  # 按发布 id 倒序（与 create_at 通常一致，超管改发布时间后可能不同）
 
 
 class ArticleOut(BaseModel):

@@ -448,7 +448,7 @@ Content-Type: application/json
 
 ### GET `/articles/`
 
-分页获取文章列表，支持按分类过滤。按 `id` 倒序返回（最新创建在前）。
+分页获取文章列表，支持按分类过滤。**默认按 `create_at`（发布时间）倒序返回，最新发布的排最前**。
 
 **查询参数**：
 
@@ -458,10 +458,12 @@ Content-Type: application/json
 | page_size | int | 20 | 每页条数（1 ~ 100） |
 | category_id | int | 无 | 按**二级分类** id 精确过滤（不聚合一级分类下的子分类） |
 | user_id | int | 无 | 按作者用户 id 过滤（后台展示登录账户的文章；**仅超管生效**，普通用户被强制收敛为本人） |
-| sort | `id` \| `create_at` | `id` | 排序字段（倒序）：`id`=发布 id（默认，最新创建在前）；`create_at`=发布时间（最新发布在前） |
+| sort | `create_at` \| `id` | `create_at` | 排序字段（均倒序）：`create_at`=发布时间（默认，最新发布在前）；`id`=发布 id（最新创建在前，超管改过发布时间时两种排序可能不同） |
 | is_deleted | bool | false | `false` 只返回未删除文章；`true` 只返回回收站文章（后台用） |
 
 示例：`GET /articles/?page=2&page_size=10&category_id=3&user_id=1`
+
+> 默认按发布时间倒序；需要按创建顺序（id 倒序）时显式传 `sort=id`。`create_at` 相同时按 `id` 倒序兜底，翻页顺序稳定。
 
 > 可见性由服务端的 `is_deleted` 统一过滤：前台/普通列表永远拿不到已删文章，后台回收站传 `is_deleted=true` 即可枚举被删文章再恢复。
 

@@ -1,44 +1,58 @@
-"""文章列表 sort 参数：id / create_at 倒序均可工作；非法 sort 返回 422"""
+"""文章列表排序：默认按发布时间（create_at）倒序；id 倒序可显式切换；非法 sort 返回 422"""
 from datetime import datetime, timedelta, timezone
 
 from app.schema import ArticleCreate
 from app.service import ArticleService
 
 
-async def test_list_sort_default_is_id_desc(client, session, default_user, auth_headers):
-    """默认 sort=id（倒序）：最新创建的文章 id 最大排在前面"""
-    old = await ArticleService(session).create(
-        ArticleCreate(title="旧文章", user_id=default_user.id), user_id=default_user.id
+async def _create_article(
+    session, user_id: int, create_at: datetime, title: str = "文章"
+):
+    """统一构造带指定发布时间的文章（超管可指定 create_at 的 service 路径）"""
+    return await ArticleService(session).create(
+        ArticleCreate(title=title, create_at=create_at, user_id=user_id),
+        user_id=user_id,
     )
-    new = await ArticleService(session).create(
-        ArticleCreate(title="新文章", user_id=default_user.id), user_id=default_user.id
-    )
-    resp = (await client.get("/articles/?sort=id", headers=auth_headers)).json()
-    ids = [item["id"] for item in resp["data"]]
-    assert ids == sorted(ids, reverse=True)
-    assert resp["data"][0]["slug"] == new.slug
-    assert resp["data"][-1]["slug"] == old.slug
 
 
-async def test_list_sort_create_at_desc(client, session, default_user, auth_headers):
-    """sort=create_at（倒序）：按发布时间倒序，不报错，结果数正确"""
+async def test_list_default_is_create_at_desc(client, session, default_user, auth_headers):
+    """默认排序 = create_at 倒序：发布时间最新的排最前，与创建先后无关"""
     now = datetime.now(timezone.utc)
-    old_article = await ArticleService(session).create(
-        ArticleCreate(
-            title="较早文章",
-            create_at=now - timedelta(hours=2),
-            user_id=default_user.id,
-        ),
-        user_id=default_user.id,
-    )
-    new_article = await ArticleService(session).create(
-        ArticleCreate(title="较新文章", create_at=now, user_id=default_user.id),
-        user_id=default_user.id,
-    )
-    resp = (await client.get("/articles/?sort=create_at", headers=auth_headers)).json()
+    older = await _create_article(session, default_user.id, now - timedelta(days=2), "较早")
+    middle = await _create_article(session, default_user.id, now - timedelta(days=1), "中间")
+    newest = await _create_article(session, default_user.id, now, "最新")
+
+    resp = (await client.get("/articles/", headers=auth_headers)).json()
     slugs = [item["slug"] for item in resp["data"]]
-    assert new_article.slug in slugs
-    assert old_article.slug in slugs
+    assert slugs == [newest.slug, middle.slug, older.slug]
+
+
+async def test_list_sort_id_desc(client, session, default_user, auth_headers):
+    """显式 sort=id：按发布 id 倒序，与默认的发布时间排序区分开"""
+    now = datetime.now(timezone.utc)
+    # 先创建的文章发布时间更晚，两种排序结果相反
+    first = await _create_article(session, default_user.id, now, "先创建、发布时间晚")
+    second = await _create_article(
+        session, default_user.id, now - timedelta(days=1), "后创建、发布时间早"
+    )
+
+    by_id = (await client.get("/articles/?sort=id", headers=auth_headers)).json()
+    assert [item["slug"] for item in by_id["data"]] == [second.slug, first.slug]
+
+    by_default = (await client.get("/articles/", headers=auth_headers)).json()
+    assert [item["slug"] for item in by_default["data"]] == [first.slug, second.slug]
+
+
+async def test_list_create_at_tie_falls_back_to_id_desc(
+    client, session, default_user, auth_headers
+):
+    """create_at 相同时按 id 倒序兜底，保证分页顺序确定"""
+    same_time = datetime.now(timezone.utc)
+    first = await _create_article(session, default_user.id, same_time, "同一时间先创建")
+    second = await _create_article(session, default_user.id, same_time, "同一时间后创建")
+
+    resp = (await client.get("/articles/", headers=auth_headers)).json()
+    assert [item["slug"] for item in resp["data"]] == [second.slug, first.slug]
 
 
 async def test_list_sort_invalid_returns_422(client):
@@ -67,24 +81,22 @@ async def test_list_sort_with_user_scope_normal_user(
     assert resp["data"][0]["slug"] == article.slug
 
 
-async def test_trash_list_sort(client, session, default_user, auth_headers):
-    """回收站列表 sort 同样生效：id 倒序、create_at 倒序"""
-    a = await ArticleService(session).create(
-        ArticleCreate(title="待删旧", user_id=default_user.id), user_id=default_user.id
-    )
-    b = await ArticleService(session).create(
-        ArticleCreate(title="待删新", user_id=default_user.id), user_id=default_user.id
-    )
-    await ArticleService(session).delete(a.slug)
-    await ArticleService(session).delete(b.slug)
+async def test_trash_list_default_is_create_at_desc(
+    client, session, default_user, auth_headers
+):
+    """回收站列表同样默认按 create_at 倒序；sort=id 可切换"""
+    now = datetime.now(timezone.utc)
+    older = await _create_article(session, default_user.id, now - timedelta(days=1), "待删旧")
+    newer = await _create_article(session, default_user.id, now, "待删新")
+    await ArticleService(session).delete(older.slug)
+    await ArticleService(session).delete(newer.slug)
 
     trash = (
+        await client.get("/articles/?is_deleted=true", headers=auth_headers)
+    ).json()
+    assert [item["slug"] for item in trash["data"]] == [newer.slug, older.slug]
+
+    by_id = (
         await client.get("/articles/?is_deleted=true&sort=id", headers=auth_headers)
     ).json()
-    trash_ids = [item["id"] for item in trash["data"]]
-    assert trash_ids == sorted(trash_ids, reverse=True)
-
-    trash2 = (
-        await client.get("/articles/?is_deleted=true&sort=create_at", headers=auth_headers)
-    ).json()
-    assert len(trash2["data"]) == 2
+    assert [item["slug"] for item in by_id["data"]] == [newer.slug, older.slug]

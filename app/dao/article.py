@@ -36,12 +36,12 @@ class ArticleCrud:
         category_id: Optional[int] = None,
         user_id: Optional[int] = None,
         is_deleted: bool = False,
-        order_by_field: Literal["id", "create_at"] = "id",
+        order_by_field: Literal["id", "create_at"] = "create_at",
     ) -> Tuple[List[Article], int]:
         """is_deleted=False 只返回未删除文章（默认前台/后台列表）；
         is_deleted=True 只返回已删除文章（后台回收站）。
 
-        order_by_field：'id'（默认，按发布 id 倒序）/ 'create_at'（按发布时间倒序）。
+        order_by_field：'create_at'（默认，按发布时间倒序）/ 'id'（按发布 id 倒序）。
         """
         base = select(Article).where(Article.is_deleted == is_deleted)
         if user_id is not None:
@@ -62,8 +62,12 @@ class ArticleCrud:
 
         offset = (page - 1) * page_size
         sort_column = getattr(Article, order_by_field)  # type: ignore[arg-type]
+        # 主排序列倒序；create_at 相同时用 id 倒序兜底，避免翻页出现重复/漏行
+        order_clauses = [desc(sort_column)]
+        if order_by_field != "id":
+            order_clauses.append(desc(Article.id))
         data_stmt = self._with_relations(
-            base.order_by(desc(sort_column)).offset(offset).limit(page_size)
+            base.order_by(*order_clauses).offset(offset).limit(page_size)
         )
         result = await self.session.exec(data_stmt)
         return list(result.all()), total
