@@ -10,11 +10,13 @@ from app.schema import (
     ArticleBatchCategoryOut,
     ArticleCreate,
     ArticleOut,
+    ArticleSearchOut,
     ArticleUpdate,
     ArticleDetailOut,
     ArticleLikeOut,
     ArticleSort,
     PageResponse,
+    SearchScope,
 )
 
 
@@ -110,6 +112,44 @@ async def list_articles(
         _resolve_visible_user_id(user_id, current_user),
         is_deleted,
         order_by_field=resolved_sort.value,
+    )
+
+
+@router.get("/search", response_model=PageResponse[ArticleSearchOut])
+async def search_articles(
+    keyword: str = Query(
+        ...,
+        min_length=1,
+        max_length=50,
+        description="搜索关键词；多个词用空格分隔（AND）",
+    ),
+    scope: SearchScope = Query(
+        default=SearchScope.all,
+        description="搜索范围：all=标题+正文（默认）/ title=仅标题 / content=仅正文",
+    ),
+    page: int = Query(default=1, ge=1, description="页码"),
+    page_size: int = Query(default=20, ge=1, le=100, description="每页条数"),
+    category_id: Optional[int] = Query(
+        default=None, ge=1, description="按二级分类 id 精确过滤"
+    ),
+    session: AsyncSession = Depends(get_session),
+):
+    """公开搜索：标题/正文关键词匹配（多词 AND），结果统一按发布时间倒序。
+
+    摘要 `content_snippet` 为纯文本，高亮由前端根据 `matched_terms` 自行完成。
+    """
+    cleaned_keyword = keyword.strip()
+    if not cleaned_keyword:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="关键词不能为空",
+        )
+    return await ArticleService(session).search_paginated(
+        keyword=cleaned_keyword,
+        scope=scope,
+        page=page,
+        page_size=page_size,
+        category_id=category_id,
     )
 
 

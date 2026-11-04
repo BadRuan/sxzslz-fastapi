@@ -8,10 +8,13 @@ from app.schema import (
     ArticleCreate,
     ArticleUpdate,
     ArticleOut,
+    ArticleSearchOut,
     ArticleDetailOut,
     PageResponse,
+    SearchScope,
     page_response,
 )
+from app.utils.search import build_snippet, matched_fields, split_terms
 
 
 class ArticleService:
@@ -51,6 +54,35 @@ class ArticleService:
         return page_response(
             [ArticleOut.model_validate(a) for a in items], total, page, page_size
         )
+
+    async def search_paginated(
+        self,
+        *,
+        keyword: str,
+        scope: SearchScope,
+        page: int,
+        page_size: int,
+        category_id: Optional[int] = None,
+    ) -> PageResponse[ArticleSearchOut]:
+        """公开搜索：多词 AND，结果按发布时间倒序；摘要为纯文本，高亮由前端完成。"""
+        terms = split_terms(keyword)
+        items, total = await self.crud.search_paginated(
+            terms, scope.value, page, page_size, category_id
+        )
+        data: list[ArticleSearchOut] = []
+        for article in items:
+            item = ArticleSearchOut.model_validate(article)
+            item.matched_terms = terms
+            item.matched_fields = matched_fields(
+                article.title, article.content, terms, scope.value
+            )
+            item.content_snippet = (
+                build_snippet(article.content, terms)
+                if scope in (SearchScope.all, SearchScope.content)
+                else None
+            )
+            data.append(item)
+        return page_response(data, total, page, page_size)
 
     async def find_by_slug(self, slug: str) -> Optional[ArticleDetailOut]:
         """只读查询（权限校验 / 改前定位用）；不自增 view_count"""

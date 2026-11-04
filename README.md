@@ -17,7 +17,7 @@
 | 分页 | 所有列表接口返回统一 `PageResponse`；`page` 超出范围时 `data` 为空数组，不报错 |
 | 跨域 | 浏览器联调时前端源必须包含在服务端 `CORS_ORIGINS`（逗号分隔），否则被 CORS 拦截 |
 | 上传大小 | 服务端强制限制：图片默认 **30MB**（`MAX_IMAGE_SIZE_MB`）、文档默认 **50MB**（`MAX_DOCUMENT_SIZE_MB`），超出返回 `400`；空文件返回 `400 文件内容为空`。进度条与取消见 `docs/frontend-api.md` 的 `uploadWithProgress` |
-| 鉴权方式 | 文章/分类/图片本体等 **GET 公开**；图片列表、文档列表/下载、全部写操作需 `Authorization: Bearer <token>`。超管（`is_superuser`，默认账号 `ruanfumin`）可管理全部资源，见[角色权限](#角色权限) |
+| 鉴权方式 | 文章列表/详情/搜索、分类、图片本体等 **GET 公开**；图片列表、文档列表/下载、全部写操作需 `Authorization: Bearer <token>`。超管（`is_superuser`，默认账号 `ruanfumin`）可管理全部资源，见[角色权限](#角色权限) |
 
 ## 技术栈
 
@@ -82,7 +82,7 @@ uv run pytest tests/test_auth_api.py::test_login # 单个用例
 
 ## 鉴权
 
-文章 / 分类 / 图片本体（`GET /image/{slug}`）等前台接口公开；**图片列表、文档列表与下载、全部写操作**需要 JWT。
+文章列表/详情/搜索、分类、图片本体（`GET /image/{slug}`）等前台接口公开；**图片列表、文档列表与下载、全部写操作**需要 JWT。
 
 ### 角色权限
 
@@ -290,6 +290,7 @@ Content-Type: application/json
 | PATCH | `/categories/{id}` | ✓ | 修改分类 | `CategoryOut` |
 | DELETE | `/categories/{id}` | ✓ | 删除分类（级联删除子分类） | 204 空 |
 | GET | `/articles/` | ✗ | 文章分页列表 | `PageResponse[ArticleOut]` |
+| GET | `/articles/search` | ✗ | 标题/正文关键词搜索（多词 AND，按发布时间倒序） | `PageResponse[ArticleSearchOut]` |
 | POST | `/articles/` | ✓ | 创建文章（超管可指定作者/时间） | `ArticleDetailOut` |
 | POST | `/articles/batch-category` | ✓ | 批量加入/移出分类 | `ArticleBatchCategoryOut` |
 | GET | `/articles/{slug}` | ✗ | 文章详情 | `ArticleDetailOut` |
@@ -324,6 +325,7 @@ Content-Type: application/json
 4. **建文章**：`POST /articles/`，`cover_img_slug` 填上一步的 `slug`，`category_ids` 填二级分类 id 数组。
 5. **展示封面**：`<img src="/image/{cover_img_slug}">` 默认返回已压缩的 WebP 预览图；需要原图加 `?file_type=raw`。
 6. **列表分页**：`GET /articles/?page=1&page_size=20`，用响应中的 `has_next` 判断是否还有下一页；回收站文章由服务端过滤，`is_recommended` 由前端自行筛选展示。
+7. **搜索**：`GET /articles/search?keyword=泵站&scope=all`，返回纯文本摘要 `content_snippet` 与关键词列表 `matched_terms`，由前端完成高亮。
 
 ---
 
@@ -500,6 +502,69 @@ Content-Type: application/json
 ```
 
 > 列表响应不含 `content` 字段，详情接口才有。
+
+### GET `/articles/search`
+
+公开搜索标题与正文，多关键词用空格分隔（**AND**：每个词都要命中）。结果**统一按发布时间倒序**（`create_at`、`id` 均倒序），不做相关度加权。仅返回未删除文章；搜索范围始终是公开全量，**不因携带 token 收敛为本人文章**。
+
+**查询参数**：
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| keyword | string | — | 必填，1~50 字；空格分隔多个词（AND）；`%` / `_` 按字面量匹配 |
+| scope | `all` \| `title` \| `content` | `all` | 搜索范围：标题+正文 / 仅标题 / 仅正文 |
+| page | int | 1 | 页码，从 1 开始 |
+| page_size | int | 20 | 每页条数（1 ~ 100） |
+| category_id | int | 无 | 按**二级分类** id 精确过滤 |
+
+示例：`GET /articles/search?keyword=泵站%20托管&scope=all&page=1&page_size=20`
+
+**响应** `200`：`PageResponse[ArticleSearchOut]`（在 `ArticleOut` 基础上增加摘要字段）：
+
+```json
+{
+  "data": [
+    {
+      "id": 265,
+      "slug": "f46bd9b7776c42e4",
+      "cover_img_slug": null,
+      "title": "泵站托管服务公告",
+      "is_deleted": false,
+      "is_recommended": false,
+      "create_at": "2026-09-24T11:22:01.682832",
+      "view_count": 1,
+      "like_count": 0,
+      "user_id": 20,
+      "categories": [],
+      "user": {
+        "id": 20,
+        "slug": "jjqczj",
+        "nickname": "芜湖市鸠江区财政局",
+        "is_superuser": false
+      },
+      "content_snippet": "…本次泵站托管范围包括三座提升站…",
+      "matched_terms": ["泵站"],
+      "matched_fields": ["title", "content"]
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 20,
+  "has_next": false
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| content_snippet | string \| null | 正文命中片段（纯文本，已剥 HTML 标签；首尾 `…` 表示截断）；仅标题命中或 `scope=title` 时为 `null` |
+| matched_terms | string[] | 后端拆分并去重后的关键词，供前端高亮 |
+| matched_fields | string[] | 实际命中字段：`["title"]`、`["content"]` 或两者 |
+
+> 高亮由前端完成：按 `matched_terms` 对 `title` / `content_snippet` 做大小写不敏感匹配，后端不返回高亮 HTML。
+>
+> 当前实现为 `ILIKE` 顺序扫描；数据量很大时再评估 `pg_trgm` 索引。
+
+**失败**：`422` 缺少 `keyword`、纯空白、超过 50 字或 `scope` 非法。
 
 ### POST `/articles/`
 
@@ -977,6 +1042,16 @@ files: <二进制文件2>
 | categories | CategoryTree[] | 关联分类（二级分类，可为空数组） |
 | user | UserOut \| null | 作者，可能为 `null` |
 
+### ArticleSearchOut（搜索结果）
+
+继承 `ArticleOut` 全部字段，额外增加：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| content_snippet | string \| null | 正文命中片段（纯文本，已剥 HTML；仅标题命中或 `scope=title` 时为 `null`） |
+| matched_terms | string[] | 去重后的关键词列表，供前端高亮 |
+| matched_fields | string[] | 命中字段：`title` / `content` |
+
 ### UploadResult
 
 上传接口（`POST /image/`、`POST /document/`）统一响应：
@@ -1036,7 +1111,7 @@ app/
 ├── errors.py            # ServiceError（业务校验错误）→ 全局 handler 转 400
 ├── settings.py          # .env 配置、上传目录、MIME 白名单
 ├── database.py          # 引擎、请求级会话（自动 commit/rollback）、init_db
-└── utils/               # WebP 预览图生成、异步文件写入
+└── utils/               # WebP 预览图生成、异步文件写入、搜索纯函数（分词/摘要）
 tests/                   # pytest 用例与 fixtures（conftest.py）
 uploads/                 # 上传落盘目录（已 gitignore）
 ```

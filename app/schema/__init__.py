@@ -5,8 +5,10 @@ from app.schema.article import (
     ArticleDetailOut,
     ArticleLikeOut,
     ArticleOut,
+    ArticleSearchOut,
     ArticleSort,
     ArticleUpdate,
+    SearchScope,
 )
 from app.schema.auth import (
     LoginRequest,
@@ -38,6 +40,7 @@ __all__ = [
     "ArticleDetailOut",
     "ArticleLikeOut",
     "ArticleOut",
+    "ArticleSearchOut",
     "ArticleSort",
     "ArticleUpdate",
     "BaseInfoOut",
@@ -55,6 +58,7 @@ __all__ = [
     "PasswordChangeOut",
     "PasswordChangeRequest",
     "PasswordResetOut",
+    "SearchScope",
     "TokenOut",
     "UploadResult",
     "UserCreate",

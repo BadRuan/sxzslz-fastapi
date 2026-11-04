@@ -1,11 +1,12 @@
 from typing import List, Literal, Optional, Tuple
 from datetime import datetime
-from sqlalchemy import delete as sa_delete, exists, insert as sa_insert
+from sqlalchemy import and_, delete as sa_delete, exists, insert as sa_insert, or_
 from sqlalchemy.orm import selectinload
 from sqlmodel import select, func, desc, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.errors import ServiceError
 from app.model import Article, ArticleCategory, Category
+from app.utils.search import escape_like
 
 
 class ArticleCrud:
@@ -68,6 +69,54 @@ class ArticleCrud:
             order_clauses.append(desc(Article.id))
         data_stmt = self._with_relations(
             base.order_by(*order_clauses).offset(offset).limit(page_size)
+        )
+        result = await self.session.exec(data_stmt)
+        return list(result.all()), total
+
+    async def search_paginated(
+        self,
+        terms: List[str],
+        scope: Literal["all", "title", "content"],
+        page: int,
+        page_size: int,
+        category_id: Optional[int] = None,
+    ) -> Tuple[List[Article], int]:
+        """标题/正文关键词搜索：多个词之间 AND（每个词命中任一搜索字段即可）；
+        结果统一按发布时间倒序（create_at desc, id desc），不做相关度排序。"""
+        if not terms:
+            return [], 0
+
+        base = select(Article).where(Article.is_deleted == False)  # noqa: E712
+        if category_id is not None:
+            # 与列表一致：仅二级分类精确匹配
+            related = (
+                select(ArticleCategory.article_id)
+                .where(
+                    ArticleCategory.article_id == Article.id,
+                    ArticleCategory.category_id == category_id,
+                )
+            )
+            base = base.where(exists(related))
+
+        term_conditions = []
+        for term in terms:
+            pattern = f"%{escape_like(term)}%"
+            fields = []
+            if scope in ("all", "title"):
+                fields.append(Article.title.ilike(pattern, escape="\\"))
+            if scope in ("all", "content"):
+                fields.append(Article.content.ilike(pattern, escape="\\"))
+            term_conditions.append(or_(*fields))
+        base = base.where(and_(*term_conditions))
+
+        count_stmt = select(func.count()).select_from(base.subquery())
+        total: int = (await self.session.exec(count_stmt)).one()
+
+        offset = (page - 1) * page_size
+        data_stmt = self._with_relations(
+            base.order_by(
+                desc(Article.create_at), desc(Article.id)
+            ).offset(offset).limit(page_size)
         )
         result = await self.session.exec(data_stmt)
         return list(result.all()), total

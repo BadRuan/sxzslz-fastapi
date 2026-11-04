@@ -38,11 +38,12 @@
 ### 鉴权总览
 
 - **角色**：`is_superuser=true` 为**超级管理员**（默认账号 `ruanfumin`），其余均为普通用户。登录后从 `/auth/me` 或 `/base/` 的 `user[].is_superuser` 判断。
-- **公开 GET**：文章列表/详情、图片本体 `GET /image/{slug}`、分类、`/base/`。
+- **公开 GET**：文章列表/详情/搜索、图片本体 `GET /image/{slug}`、分类、`/base/`。
 - **需登录 GET**：图片列表 `GET /image/`、文件列表 `GET /document/`、文件下载 `GET /document/{slug}`。
 - **写操作需登录**：分类/文章的 `POST` / `PATCH` / `DELETE`、图片/文件的 `POST` 上传、文件/图片的 `PATCH` / `DELETE`、修改密码；其中**分类管理、批量分类与用户账户管理（`/users`）仅超管**（普通用户 → 403）。
 - **权限边界（摘要）**：
   - 文章列表：**匿名** = 公开全量（前台）；**普通用户** = 固定只返回**自己**的文章（`user_id` 参数被忽略）；**超管** = 全量（可按 `user_id` 过滤、`is_deleted=true` 查回收站）。带非法/过期 token → `401`（不降级为匿名）。
+  - 文章搜索：**始终公开全量**（仅未删文章），不随调用者收敛；该接口不解析鉴权，携带 token（含非法/过期 token）也不影响结果、不会 401。
   - 文章：普通用户只能改/删/恢复**自己**的；超管可改任意，并可指定 `user_id`（作者）与 `create_at`（发布时间）。`view_count` / `like_count` 对所有人均不可 PATCH。
   - 分类：`GET` 保持公开；**创建/修改/删除分类与批量分类仅超管**，普通用户 → `403 仅超级管理员可管理文章分类`。
   - 用户账户：超管可**创建普通账户**（密码缺省 `abc123`）、**删除普通账户**、**重置普通账户密码为 `abc123`**；超级管理员账户受保护。
@@ -497,6 +498,71 @@ function showError(res) {
 ```
 
 > 可见性由服务端统一过滤：前台永远拿不到已删文章；后台回收站传 `is_deleted=true`。
+
+### GET `/articles/search`
+
+公开搜索标题与正文，支持多关键词（空格分隔，**AND**：每个词都要命中）。结果**统一按发布时间倒序**（`create_at`、`id` 均倒序），不按相关度或命中字段加权；仅返回未删除文章，且**始终为公开全量**（不因 token 收敛为本人文章）。
+
+**查询参数**：
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| keyword | string | — | 必填，1~50 字；空格分隔多个词（AND）；`%` / `_` 按字面量匹配 |
+| scope | `all` \| `title` \| `content` | `all` | 搜索范围：标题+正文 / 仅标题 / 仅正文 |
+| page | int | 1 | 页码 |
+| page_size | int | 20 | 每页条数（1~100） |
+| category_id | int | 无 | 按**二级分类** id 精确过滤 |
+
+示例：`GET /articles/search?keyword=泵站%20托管&scope=content&page=1&page_size=20`
+
+**响应** `200`：`PageResponse[ArticleSearchOut]`。`ArticleSearchOut` 继承 `ArticleOut`，额外返回：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| content_snippet | string \| null | 正文命中片段（纯文本，已剥 HTML 标签；首尾 `…` 表示截断）；仅标题命中或 `scope=title` 时为 `null` |
+| matched_terms | string[] | 后端拆分并去重后的关键词，供前端高亮 |
+| matched_fields | string[] | 实际命中字段：`["title"]`、`["content"]` 或两者 |
+
+```json
+{
+  "data": [
+    {
+      "id": 265,
+      "slug": "f46bd9b7776c42e4",
+      "cover_img_slug": null,
+      "title": "泵站托管服务公告",
+      "is_deleted": false,
+      "is_recommended": false,
+      "create_at": "2026-09-24T11:22:01.682832",
+      "view_count": 1,
+      "like_count": 0,
+      "user_id": 20,
+      "categories": [],
+      "user": {
+        "id": 20,
+        "slug": "jjqczj",
+        "nickname": "芜湖市鸠江区财政局",
+        "is_superuser": false
+      },
+      "content_snippet": "…本次泵站托管范围包括三座提升站…",
+      "matched_terms": ["泵站"],
+      "matched_fields": ["title", "content"]
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 20,
+  "has_next": false
+}
+```
+
+**前端高亮**：后端不返回 `<em>` / `<mark>` 等高亮 HTML，只返回纯文本与 `matched_terms`。前端对 `title` / `content_snippet` 做大小写不敏感匹配并包 `<mark>`（先转义文本再拼接 HTML，或用文本节点分段渲染）。`matched_fields` 可用于展示「标题命中 / 正文命中」标签。
+
+**失败**：
+- `422` 缺少 `keyword`、纯空白、超过 50 字、`scope` 非法。
+- 搜索词中的 `%` / `_` 按字面量匹配，不是通配符。
+
+> 性能提示：当前为 `ILIKE` 顺序扫描；数据量很大时再评估 `pg_trgm` 索引。高亮在后端不做，避免富文本 XSS。
 
 ### POST `/articles/`（需登录）
 
@@ -1266,6 +1332,16 @@ async function deleteDocument(slug) {
 | categories | CategoryTree[] | 关联的二级分类 |
 | user | UserOut \| null | 作者 |
 
+### ArticleSearchOut（搜索结果）
+
+继承 `ArticleOut` 全部字段，额外增加：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| content_snippet | string \| null | 正文命中片段（纯文本，已剥 HTML；首尾 `…` 表示截断）；仅标题命中或 `scope=title` 时为 `null` |
+| matched_terms | string[] | 去重后的关键词列表，供前端高亮 |
+| matched_fields | string[] | 命中字段：`title` / `content` |
+
 ### UploadResult
 
 上传接口（`POST /image/`、`POST /document/`）统一响应：
@@ -1351,6 +1427,15 @@ async function deleteDocument(slug) {
 
 **Q：时间字段解析偏差？**
 `create_at` / `uploaded_at` 无时区后缀，是服务器本地时间（`Asia/Shanghai`）。JS 侧 `new Date("2026-10-27T13:01:37.520947")` 按浏览器本地时区解析，跨时区部署时注意。
+
+**Q：搜索接口为什么没有返回高亮 HTML？**
+后端只返回纯文本 `title` / `content_snippet` 与去重后的 `matched_terms`，避免富文本拼接导致的 XSS。前端按 `matched_terms` 做大小写不敏感匹配，先转义文本再包 `<mark>`，或用文本节点分段渲染；`matched_fields` 可用于展示「标题命中 / 正文命中」标签。
+
+**Q：带 token 调用搜索，结果会只返回自己的文章吗？**
+不会。搜索始终是公开全量（仅排除已删文章），不随调用者收敛；后台管理列表才按身份收敛。搜索接口不解析鉴权，非法/过期 token 也不会导致 `401`。
+
+**Q：搜索多个关键词是 AND 还是 OR？**
+按空白拆分为多个词，**词之间 AND**（每个词都必须在所选范围内命中），同一词可在标题或正文命中。`%` / `_` 按字面量匹配，不是 SQL 通配符。
 
 ---
 

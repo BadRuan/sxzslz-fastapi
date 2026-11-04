@@ -15,6 +15,14 @@ class ArticleSort(str, Enum):
     id = "id"  # 按发布 id 倒序（后台管理默认，最新创建在前）
 
 
+class SearchScope(str, Enum):
+    """GET /articles/search 的搜索范围"""
+
+    all = "all"  # 标题 + 正文（默认）
+    title = "title"  # 仅标题
+    content = "content"  # 仅正文
+
+
 class ArticleOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -30,6 +38,14 @@ class ArticleOut(BaseModel):
     user_id: int
     categories: list[CategoryTree] = []
     user: UserOut | None = None
+
+
+class ArticleSearchOut(ArticleOut):
+    """搜索结果：在列表字段上补充正文摘要与前端高亮所需信息（不返回高亮 HTML）。"""
+
+    content_snippet: str | None = None
+    matched_terms: list[str] = []
+    matched_fields: list[str] = []
 
 
 class ArticleDetailOut(BaseModel):
