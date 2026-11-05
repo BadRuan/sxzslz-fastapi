@@ -625,7 +625,7 @@ function showError(res) {
 
 **失败**：`404 文章不存在`（含已删除）。
 
-> 封面图展示：`<img src="{BASE}/image/{cover_img_slug}">` 默认返回 WebP 预览图；原图加 `?file_type=raw`。
+> 封面图展示：`<img src="{BASE}/image/{cover_img_slug}">` 默认返回 WebP 预览图；原图加 `?file_type=raw`（简写 `?raw=1`）。
 
 ### PATCH `/articles/{slug}`（需登录）
 
@@ -1011,14 +1011,17 @@ files: <二进制图片 2>
 
 **公开**（文章封面等前台场景依赖，不限制上传者）。返回图片文件本体（浏览器可直接打开）。**每次成功访问 `view` +1**。
 
-**查询参数**：`file_type`，默认 `preview`。
+**查询参数**：
 
-| 值 | 说明 |
-|----|------|
-| `preview` | WebP 预览图（自动压缩，`Content-Type: image/webp`） |
-| `raw` | 原图（`Content-Type` 为上传时的 MIME） |
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `file_type` | `preview`（默认） / `raw` | `preview`=WebP 预览图（自动压缩，`Content-Type: image/webp`）；`raw`=原图（`Content-Type` 为上传时的 MIME） |
+| `raw` | bool，默认 `false` | `?raw=1` 等价于 `?file_type=raw`，方便前端直接拼地址 |
 
-示例：`<img src="{BASE}/image/0bee5133169c4e888c147aba8864fa14.png">`（预览）；`?file_type=raw`（原图）。
+**响应头**：`Content-Disposition: inline`、`Cache-Control: public, max-age=604800`、`X-Content-Type-Options: nosniff`。
+
+示例：`<img src="{BASE}/image/0bee5133169c4e888c147aba8864fa14.png">`（列表/正文用预览图省流量）；
+点开看原图用 `{BASE}/image/0bee5133169c4e888c147aba8864fa14.png?raw=1`。
 
 **失败**：`404 Image not found`。
 
@@ -1206,13 +1209,20 @@ files: <二进制文件 2>
 
 **失败**：`401` 未登录。
 
-### GET `/document/{slug}`（需登录）
+### GET `/document/{slug}`（公开）
 
-下载文件（带原始文件名）。**每次成功访问 `view` +1**。
+读取文件（带原始文件名）。**每次成功访问 `view` +1**。
 
-**权限**：公开下载（无需登录）；改名/删除需上传者本人或超管。
+**权限**：公开读取（无需登录）；改名/删除需上传者本人或超管。
 
-**响应**：文件二进制流，`Content-Disposition: attachment`，`Content-Type` 为上传时的 MIME。
+**查询参数**：
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `inline` | bool | `false` | `true`=浏览器内联打开（`Content-Disposition: inline`），供 `<iframe>` 在线预览 PDF 等；`false`=作为附件下载 |
+
+**响应**：文件二进制流，`Content-Type` 为上传时的 MIME，`Cache-Control: public, max-age=604800`，
+`X-Content-Type-Options: nosniff`。默认 `Content-Disposition: attachment`；`?inline=true` 时为 `inline`。
 
 前端下载示例：
 

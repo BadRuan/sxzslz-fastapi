@@ -95,9 +95,14 @@ async def upload_images_batch(
 async def get_image(
     slug: str,
     file_type: ImageType = Query(default=ImageType.preview, description="返回原图或预览图"),
+    raw: bool = Query(default=False, description="true 等价于 file_type=raw，便于前端直接拼 ?raw=1"),
     session: AsyncSession = Depends(get_session),
 ):
-    """公开读取图片本体（文章封面等前台场景依赖此接口，不限制上传者）"""
+    """公开读取图片本体（文章封面等前台场景依赖此接口，不限制上传者）
+
+    默认返回 WebP 预览图（省流量）；`?raw=1` 或 `?file_type=raw` 返回原图，
+    前台「点击查看原图」应当使用原图地址。
+    """
     service = ImageService(session)
     image = await service.get_by_slug(slug)
     if image is None:
@@ -105,7 +110,8 @@ async def get_image(
             status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
         )
 
-    if file_type == ImageType.raw:
+    wants_raw = raw or file_type == ImageType.raw
+    if wants_raw:
         file_path = path.join(upload_dir.image_raw, slug)
         media_type = image.mime_type
     else:
@@ -117,7 +123,12 @@ async def get_image(
     return FileResponse(
         path=file_path,
         media_type=media_type,
-        headers={"Content-Disposition": "inline"},
+        headers={
+            "Content-Disposition": "inline",
+            # slug 即内容标识，可长缓存；并禁止浏览器按内容猜 MIME
+            "Cache-Control": "public, max-age=604800",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

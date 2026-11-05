@@ -16,6 +16,17 @@ from app.settings import upload_dir
 router = APIRouter()
 
 
+# 上传文件的 slug 即内容标识，同一 slug 不会变内容，可放心让浏览器长缓存
+_FILE_CACHE_HEADERS = {
+    "Cache-Control": "public, max-age=604800",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
+def _file_headers() -> dict[str, str]:
+    return dict(_FILE_CACHE_HEADERS)
+
+
 def _ensure_owner_or_superuser(
     owner_id: int, current_user: User, *, forbidden_detail: str = "无权限操作该文件"
 ) -> None:
@@ -135,9 +146,17 @@ async def delete_document(
 @router.get("/{slug}")
 async def get_document(
     slug: str,
+    inline: bool = Query(
+        default=False,
+        description="true=浏览器内联打开（在线预览）；false=作为附件下载（默认）",
+    ),
     session: AsyncSession = Depends(get_session),
 ):
-    """下载文件：公开访问（无需鉴权）"""
+    """读取文件：公开访问（无需鉴权）
+
+    `inline=true` 返回 `Content-Disposition: inline`，浏览器/iframe 可直接渲染
+    （PDF、图片、纯文本等）；默认仍是附件下载，保持原有调用方行为不变。
+    """
     service = DocumentService(session)
     doc = await service.get_by_slug(slug)
     if doc is None:
@@ -148,4 +167,6 @@ async def get_document(
         filename=doc.raw_filename,
         path=path.join(upload_dir.document, slug),
         media_type=doc.mime_type,
+        content_disposition_type="inline" if inline else "attachment",
+        headers=_file_headers(),
     )
