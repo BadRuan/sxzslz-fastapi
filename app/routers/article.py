@@ -1,3 +1,4 @@
+from time import perf_counter
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -11,6 +12,8 @@ from app.schema import (
     ArticleCreate,
     ArticleOut,
     ArticleSearchOut,
+    ArticleSearchPageOut,
+    ArticleStatsOut,
     ArticleUpdate,
     ArticleDetailOut,
     ArticleLikeOut,
@@ -115,7 +118,7 @@ async def list_articles(
     )
 
 
-@router.get("/search", response_model=PageResponse[ArticleSearchOut])
+@router.get("/search", response_model=ArticleSearchPageOut)
 async def search_articles(
     keyword: str = Query(
         ...,
@@ -144,13 +147,30 @@ async def search_articles(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="关键词不能为空",
         )
-    return await ArticleService(session).search_paginated(
+    started_at = perf_counter()
+    result = await ArticleService(session).search_paginated(
         keyword=cleaned_keyword,
         scope=scope,
         page=page,
         page_size=page_size,
         category_id=category_id,
     )
+    # 服务端检索耗时（毫秒，保留 1 位小数）：前端据此展示「本次搜索耗时」
+    elapsed_ms = round((perf_counter() - started_at) * 1000, 1)
+    return ArticleSearchPageOut(**result.model_dump(), elapsed_ms=elapsed_ms)
+
+
+@router.get("/stats", response_model=ArticleStatsOut)
+async def article_stats(
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """后台概览发布量统计（需登录）：
+
+    - 超级管理员：本月新增文章数（全站，按 create_at 发布时间检索）
+    - 普通用户：本人近 15 天发布的文章数
+    """
+    return await ArticleService(session).stats(current_user)
 
 
 @router.get("/{slug}", response_model=ArticleDetailOut)

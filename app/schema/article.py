@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schema.category import CategoryTree
+from app.schema.common import PageResponse
 from app.schema.user import UserOut
 
 
@@ -114,3 +115,24 @@ class ArticleBatchCategoryOut(BaseModel):
     """affected = 成功处理的未删除文章数"""
 
     affected: int
+
+
+class ArticleSearchPageOut(PageResponse[ArticleSearchOut]):
+    """搜索结果分页：额外返回本次检索的服务端耗时，供前端展示检索性能。"""
+
+    elapsed_ms: float = Field(default=0.0, ge=0, description="服务端检索耗时（毫秒）")
+
+
+class ArticleStatsScope(str, Enum):
+    """文章发布量统计口径"""
+
+    month = "month"  # 超级管理员：本月新增（按发布时间）
+    half_month = "half_month"  # 普通用户：本人近 15 天发布
+
+
+class ArticleStatsOut(BaseModel):
+    scope: ArticleStatsScope
+    label: str
+    count: int
+    start_at: datetime
+    end_at: datetime

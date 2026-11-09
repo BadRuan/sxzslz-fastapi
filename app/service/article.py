@@ -1,7 +1,9 @@
+from datetime import datetime, timedelta
 from typing import Literal, Optional
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.settings import settings
 from app.dao import ArticleCrud
+from app.model import User
 from app.schema import (
     ArticleBatchCategoryIn,
     ArticleBatchCategoryOut,
@@ -9,6 +11,8 @@ from app.schema import (
     ArticleUpdate,
     ArticleOut,
     ArticleSearchOut,
+    ArticleStatsOut,
+    ArticleStatsScope,
     ArticleDetailOut,
     PageResponse,
     SearchScope,
@@ -148,3 +152,26 @@ class ArticleService:
     async def like(self, slug: str) -> Optional[int]:
         """匿名点赞，返回自增后的 like_count；文章不存在返回 None"""
         return await self.crud.increment_like(slug)
+
+    @staticmethod
+    def _stats_window(current_user: User) -> tuple[ArticleStatsScope, str, datetime, Optional[int]]:
+        """统计口径：超管=本月新增（全站，按发布时间）；普通用户=本人近 15 天发布"""
+        now = datetime.now()
+        if current_user.is_superuser:
+            start_at = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            return ArticleStatsScope.month, "本月新增文章", start_at, None
+        return (
+            ArticleStatsScope.half_month,
+            "我的近半月发布",
+            now - timedelta(days=15),
+            current_user.id,
+        )
+
+    async def stats(self, current_user: User) -> ArticleStatsOut:
+        """后台概览：按角色返回不同的发布量统计（超管本月新增 / 普通用户本人近半月）"""
+        scope, label, start_at, user_id = self._stats_window(current_user)
+        now = datetime.now()
+        count = await self.crud.count_created_between(start_at, now, user_id)
+        return ArticleStatsOut(
+            scope=scope, label=label, count=count, start_at=start_at, end_at=now
+        )

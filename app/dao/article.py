@@ -268,3 +268,23 @@ class ArticleCrud:
             article.is_deleted = False
             await self.session.flush()
         return article
+
+    async def count_created_between(
+        self,
+        start_at: datetime,
+        end_at: datetime,
+        user_id: Optional[int] = None,
+    ) -> int:
+        """统计 [start_at, end_at] 内发布的未删除文章数（按 create_at 发布时刻）。
+
+        user_id 为 None 时统计全站（超管视角），否则只统计该作者本人。
+        """
+        base = select(Article).where(
+            Article.is_deleted == False,  # noqa: E712
+            Article.create_at >= start_at,
+            Article.create_at <= end_at,
+        )
+        if user_id is not None:
+            base = base.where(Article.user_id == user_id)
+        count_stmt = select(func.count()).select_from(base.subquery())
+        return int((await self.session.exec(count_stmt)).one())

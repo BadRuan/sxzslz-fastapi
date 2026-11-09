@@ -6,7 +6,10 @@ from app.schema.article import (
     ArticleLikeOut,
     ArticleOut,
     ArticleSearchOut,
+    ArticleSearchPageOut,
     ArticleSort,
+    ArticleStatsOut,
+    ArticleStatsScope,
     ArticleUpdate,
     SearchScope,
 )
@@ -31,6 +34,7 @@ from app.schema.file import (
     ImageUpdate,
     UploadResult,
 )
+from app.schema.system import StorageOut
 from app.schema.user import BaseInfoOut, PasswordResetOut, UserCreate, UserOut
 
 __all__ = [
@@ -41,6 +45,9 @@ __all__ = [
     "ArticleLikeOut",
     "ArticleOut",
     "ArticleSearchOut",
+    "ArticleSearchPageOut",
+    "ArticleStatsOut",
+    "ArticleStatsScope",
     "ArticleSort",
     "ArticleUpdate",
     "BaseInfoOut",
@@ -59,6 +66,7 @@ __all__ = [
     "PasswordChangeRequest",
     "PasswordResetOut",
     "SearchScope",
+    "StorageOut",
     "TokenOut",
     "UploadResult",
     "UserCreate",
