@@ -21,15 +21,22 @@ from app.schema import (
     PageResponse,
     SearchScope,
 )
+from app.types import (
+    ARTICLE_DELETE_FORBIDDEN,
+    ARTICLE_FORBIDDEN,
+    ARTICLE_RESTORE_FORBIDDEN,
+    CATEGORY_MANAGE_FORBIDDEN,
+    DEFAULT_PAGE,
+    DEFAULT_PAGE_SIZE,
+    MAX_PAGE_SIZE,
+)
 
 
 router = APIRouter()
 
-CATEGORY_MANAGE_FORBIDDEN = "仅超级管理员可管理文章分类"
-
 
 def _ensure_can_modify(
-    article_user_id: int, current_user: User, *, detail: str = "无权修改他人文章"
+    article_user_id: int, current_user: User, *, detail: str = ARTICLE_FORBIDDEN
 ) -> None:
     """非作者且非超管 → 403（不存在已在调用前用 404 拦截）"""
     if article_user_id != current_user.id and not current_user.is_superuser:
@@ -84,8 +91,10 @@ async def batch_apply_category(
 
 @router.get("/", response_model=PageResponse[ArticleOut])
 async def list_articles(
-    page: int = Query(default=1, ge=1, description="页码"),
-    page_size: int = Query(default=20, ge=1, le=100, description="每页条数"),
+    page: int = Query(default=DEFAULT_PAGE, ge=1, description="页码"),
+    page_size: int = Query(
+        default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="每页条数"
+    ),
     category_id: Optional[int] = Query(default=None, ge=1, description="分类ID"),
     user_id: Optional[int] = Query(default=None, ge=1, description="作者用户ID"),
     is_deleted: bool = Query(
@@ -130,8 +139,10 @@ async def search_articles(
         default=SearchScope.all,
         description="搜索范围：all=标题+正文（默认）/ title=仅标题 / content=仅正文",
     ),
-    page: int = Query(default=1, ge=1, description="页码"),
-    page_size: int = Query(default=20, ge=1, le=100, description="每页条数"),
+    page: int = Query(default=DEFAULT_PAGE, ge=1, description="页码"),
+    page_size: int = Query(
+        default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="每页条数"
+    ),
     category_id: Optional[int] = Query(
         default=None, ge=1, description="按二级分类 id 精确过滤"
     ),
@@ -225,7 +236,7 @@ async def delete_article(
     existing = await service.find_by_slug(slug)
     if existing is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")
-    _ensure_can_modify(existing.user_id, current_user, detail="无权删除他人文章")
+    _ensure_can_modify(existing.user_id, current_user, detail=ARTICLE_DELETE_FORBIDDEN)
     await service.delete(slug)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -241,7 +252,9 @@ async def restore_article(
     existing = await service.crud.get_by_slug(slug, include_deleted=True)
     if existing is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")
-    _ensure_can_modify(existing.user_id, current_user, detail="无权恢复他人文章")
+    _ensure_can_modify(
+        existing.user_id, current_user, detail=ARTICLE_RESTORE_FORBIDDEN
+    )
     article = await service.restore(slug)
     if article is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")

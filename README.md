@@ -1097,21 +1097,25 @@ files: <二进制文件2>
 
 ## 项目结构
 
-分层调用：`routers → service → dao → model`，请求/响应模型集中在 `app/schema/`。
+分层调用：`routers → service → dao → model`，请求/响应模型集中在 `app/schema/`；横切能力（JWT 鉴权、数据库会话、全局错误处理）集中在 `app/core/`。
 
 ```
 main.py                  # 入口：挂载路由、CORS、访问日志中间件、lifespan 启动建表
 app/
+├── core/                # 核心层：auth.py（JWT 签发/校验）、database.py（引擎/会话/建表）、error.py（ServiceError → 全局 handler）
 ├── routers/             # 路由层：参数校验、404 等 HTTP 状态码
+│   └── _common.py       # 图片/文档路由共用：列表可见范围、403 权限判断、上传响应组装
 ├── service/             # 业务层：校验、分页组装（page_response）
+│   └── file.py          # BaseFileService：图片/文档上传共用基类（白名单→分块落盘→后处理→写库，批量整批原子）
 ├── dao/                 # 数据层：SQLModel 查询，只 flush 不 commit
 ├── model/               # 表模型（Category / Article / Image / Document / User）
-├── schema/              # 请求 / 响应 Pydantic 模型
-├── auth.py              # JWT 签发与校验（get_current_user）
-├── errors.py            # ServiceError（业务校验错误）→ 全局 handler 转 400
+├── schema/              # 请求 / 响应 Pydantic 模型（按领域分文件）
+├── types.py             # 跨层共享常量：403 文案、分页页码/页大小阈值
 ├── settings.py          # .env 配置、上传目录、MIME 白名单
-├── database.py          # 引擎、请求级会话（自动 commit/rollback）、init_db
-└── utils/               # WebP 预览图生成、异步文件写入、搜索纯函数（分词/摘要）
+├── auth.py              # 兼容层：重导出自 app/core/auth（新代码直接用 app.core.auth）
+├── database.py          # 兼容层：init_db 仍在此定义（便于测试替换 engine），其余重导出自 app/core/database
+├── errors.py            # 兼容层：重导出自 app/core/error
+└── utils/               # WebP 预览图生成、异步文件写入、批量上传错误文案、搜索纯函数（分词/摘要）
 tests/                   # pytest 用例与 fixtures（conftest.py）
 uploads/                 # 上传落盘目录（已 gitignore）
 ```
@@ -1164,6 +1168,7 @@ docker run -d -p 8088:8088 \
 - 文章通过 slug 定位，slug 由 UUID 自动生成。
 - 文章只能关联二级分类；按 `category_id` 过滤时精确匹配该分类，不聚合子分类。
 - 表间关联不使用数据库外键，由业务层维护（`article_category` 关联表）。
-- 上传文件落盘 `./uploads/` 目录。
+- 上传文件落盘 `./uploads/` 目录。图片与文档上传共用 `app/service/file.py` 的 `BaseFileService`（MIME 白名单 → 生成 slug → 分块流式落盘 → 图片 MD5 去重与 WebP 预览 → 写库），批量上传的「先整批校验类型、任一失败整批回滚」逻辑只维护一份；子类只覆写差异点（`ensure_type` / `post_upload` / `remove_file`）。
+- 鉴权、数据库会话与全局错误处理的实现放在 `app/core/`（`auth.py` / `database.py` / `error.py`），跨层共享的 403 文案与分页阈值集中在 `app/types.py`；`app/auth.py`、`app/database.py`、`app/errors.py` 是兼容层（重导出，旧导入路径继续可用），新代码直接导入 `app.core.*`。
 - `requirements.txt` 是给 Docker（pip）用的**钉死版本快照**，由 `uv export --no-dev --no-hashes -o requirements.txt` 生成——改动 `pyproject.toml` 依赖后需重新导出同步，勿手改。
 - 项目**无 lint / typecheck / formatter / CI 配置**；包管理与依赖锁以 `pyproject.toml` + `uv.lock` 为准。

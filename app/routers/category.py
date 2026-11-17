@@ -6,11 +6,10 @@ from app.database import get_session
 from app.model import User
 from app.service import CategoryService
 from app.schema import CategoryCreate, CategoryUpdate, CategoryOut
+from app.types import CATEGORY_MANAGE_FORBIDDEN
 
 
 router = APIRouter()
-
-CATEGORY_MANAGE_FORBIDDEN = "仅超级管理员可管理文章分类"
 
 
 @router.post("/", response_model=CategoryOut, status_code=status.HTTP_201_CREATED)

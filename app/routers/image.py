@@ -9,9 +9,11 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.auth import get_current_user
 from app.database import get_session
 from app.model import Image, User
+from app.routers._common import ensure_owner_or_superuser, to_upload_result_image, visible_user_id
 from app.schema import ImageOut, ImageUpdate, PageResponse, UploadResult
 from app.service import ImageService
 from app.settings import upload_dir
+from app.types import DEFAULT_PAGE, FILE_DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
 router = APIRouter()
 
@@ -21,44 +23,18 @@ class ImageType(str, Enum):
     preview = "preview"
 
 
-def _ensure_owner_or_superuser(
-    owner_id: int, current_user: User, *, forbidden_detail: str = "无权限操作该文件"
-) -> None:
-    """非本人且非超管 → 403（不存在已在调用前用 404 拦截）"""
-    if owner_id != current_user.id and not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail=forbidden_detail
-        )
-
-
-def _visible_user_id(current_user: User) -> int | None:
-    """列表可见范围：超管 None=全部；普通用户=仅自己"""
-    return None if current_user.is_superuser else current_user.id
-
-
-def _to_upload_result(image: Image) -> UploadResult:
-    """Image 记录 → 上传响应（单文件与批量共用）"""
-    slug = image.slug
-    return UploadResult(
-        filename=image.raw_filename,
-        slug=slug,
-        content_type=image.mime_type,
-        size_bytes=image.size_bytes,
-        url=f"/image/{slug}",
-        raw_url=f"/image/{slug}?file_type=raw",
-    )
-
-
 @router.get("/", response_model=PageResponse[ImageOut])
 async def get_images(
-    page: int = Query(default=1, ge=1, description="页码"),
-    page_size: int = Query(default=30, ge=1, le=100, description="每页条数"),
+    page: int = Query(default=DEFAULT_PAGE, ge=1, description="页码"),
+    page_size: int = Query(
+        default=FILE_DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="每页条数"
+    ),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """需登录：超管看全部，普通用户只看自己上传的"""
     return await ImageService(session).list_paginated(
-        page, page_size, user_id=_visible_user_id(current_user)
+        page, page_size, user_id=visible_user_id(current_user)
     )
 
 
@@ -77,7 +53,7 @@ async def upload_image(
     )
     if image is None:
         raise HTTPException(status_code=400, detail="上传失败")
-    return _to_upload_result(image)
+    return to_upload_result_image(image)
 
 
 @router.post("/batch/", response_model=List[UploadResult])
@@ -88,7 +64,7 @@ async def upload_images_batch(
 ):
     """多图同时上传（整批原子）：任一文件失败 → 400 整批不生效，不残留文件与记录"""
     images = await ImageService(session).add_many(files, user_id=current_user.id)
-    return [_to_upload_result(image) for image in images]
+    return [to_upload_result_image(image) for image in images]
 
 
 @router.get("/{slug}")
@@ -146,7 +122,7 @@ async def update_image(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
         )
-    _ensure_owner_or_superuser(image.user_id, current_user)
+    ensure_owner_or_superuser(image.user_id, current_user)
     updated = await service.rename(slug, data.raw_filename)
     if updated is None:
         raise HTTPException(
@@ -168,6 +144,6 @@ async def delete_image(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
         )
-    _ensure_owner_or_superuser(image.user_id, current_user)
+    ensure_owner_or_superuser(image.user_id, current_user)
     await service.remove_by_slug(slug)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

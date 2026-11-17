@@ -18,7 +18,7 @@ uv run pytest tests/test_article_api.py::test_name   # 单测
 
 ## 架构
 
-分层调用：`routers → service → dao → model`，请求/响应模型集中在 `app/schema.py`。
+分层调用：`routers → service → dao → model`，请求/响应模型集中在 `app/schema/`（包，不是单文件）；横切能力集中在 `app/core/`：`auth.py`（JWT）、`database.py`（engine/`get_session`/`init_db`）、`error.py`（`ServiceError` + 全局 handler）。`app/auth.py`、`app/database.py`、`app/errors.py` 是**兼容层**（重导出，旧导入路径继续可用），新代码直接导入 `app.core.*`；`app/database.py:init_db` 使用本模块 `engine`，便于测试 `monkeypatch.setattr(app.database, "engine", ...)` 注入。跨层共享的 403 文案与分页阈值在 `app/types.py`（`CATEGORY_MANAGE_FORBIDDEN` 等），图片/文档路由共用辅助在 `app/routers/_common.py`（`visible_user_id` / `ensure_owner_or_superuser` / `to_upload_result_*`）。
 
 - 入口：`main.py` 的 `app`；`lifespan` 每次启动自动执行一次 `init_db()` 建表（`SQLModel.metadata.create_all`）。
 - 路由统一在 `app/routers/__init__.py` 导出为 `*_router`，由 `main.py` 挂载（image / document 也已挂载）。
@@ -35,7 +35,7 @@ uv run pytest tests/test_article_api.py::test_name   # 单测
 - 文章作者默认取当前登录用户（`POST /articles/` 从 JWT 解析）；body 可选传 `user_id`（≥1）指定发布主体**（仅超管，普通用户传他人 → 403）**。`settings.DEFAULT_USER_ID` 仅作 service 层不传 `user_id` 时的兜底。`GET /articles/` 支持 `user_id` 过滤（仅超管生效，普通用户被强制收敛为本人）。
 - 上传落盘 `./uploads/`（`app/settings.py` 的 `upload_dir`）。上传为**分块流式落盘**（`write_upload_stream`，1MB/块，避免整文件进内存）；大小上限 `settings.MAX_IMAGE_SIZE_MB`（默认 10）/ `MAX_DOCUMENT_SIZE_MB`（默认 50），超限或空文件 → ServiceError 400 并清理半成品。落盘 `OSError` 由 `storage_error_from` 归类为 `StorageError`（ENOSPC=磁盘满 / EACCES·EPERM=无写权限 / 其他=保存失败）→ service 转 ServiceError 400；客户端中断（`ClientDisconnect`，前端 `AbortController` 取消）与任何未预期异常同样清理半成品。MIME 白名单在 `settings.allow_type`（图片：JPEG/PNG/GIF/WebP/BMP/TIFF/ICO；文档：txt/csv/md/rtf/pdf/Office 全家桶/ODF/zip·7z·rar·gz·tar/epub），友好后缀串 `IMAGE_TYPE_LABEL` / `DOCUMENT_TYPE_LABEL`。进度条由前端 `XMLHttpRequest.upload.onprogress` + `AbortController` 实现（`docs/frontend-api.md` 的 `uploadWithProgress`，图片/文档共用）。`UploadResult` 含 `size_bytes` / `url`（图片=预览、文档=下载）/ `raw_url`（仅图片）。批量上传端点 `POST /image/batch/`、`POST /document/batch/`（表单字段 `files`，上限 `settings.MAX_BATCH_FILES` 默认 20，整批原子：任一文件失败 400 并清理本批已落盘文件，DB 记录随请求事务回滚）。
 - 文档管理：`PATCH /document/{slug}` 仅上传者或超管可改展示名 `raw_filename`（slug/内容不变）；`DELETE /document/{slug}` 仅上传者或超管可删（DB + 磁盘文件一并清理，硬删不可恢复）。非本人且非超管 → 403 `无权限操作该文件`，不存在 → 404。图片同样有 PATCH 改名 / DELETE；图片本体读取保持公开。
-- 业务校验错误：dao/service 抛 `ServiceError`（`ValueError` 子类，`app/errors.py`）→ 全局 handler 转 400 `{"detail": "..."}`（路由层不 try/except）；资源不存在 → 404；参数格式非法 → 422。
+- 业务校验错误：dao/service 抛 `ServiceError`（`ValueError` 子类，实现在 `app/core/error.py`，`app/errors.py` 兼容重导出）→ 全局 handler 转 400 `{"detail": "..."}`（路由层不 try/except）；资源不存在 → 404；参数格式非法 → 422。
 - ArticleUpdate 的 null 语义：可空字段显式 `null` 表示清空；非空字段传 `null` 返回 400。
 
 ## 鉴权
@@ -44,13 +44,13 @@ JWT Bearer（`pyjwt`，HS256，密钥 `settings.SECRET_KEY`）。
 
 - `POST /auth/login` → `{"access_token", "token_type": "bearer"}`；`GET /auth/me` 返回当前用户；`PUT /auth/password` 改密（body `{old_password, new_password}`，需登录；旧密码错 → ServiceError 400，新密码 <6 位 → 422）。
 - **读接口公开；写操作（分类/文章的 POST/PATCH/DELETE）需 `Authorization: Bearer <token>`**，否则 401；分类写操作、批量分类与用户账户管理额外要求超管（普通用户 → 403）。
-- 校验逻辑在 `app/auth.py`：`get_current_user`（必须登录）、`get_optional_user`（可选登录，供 `GET /articles/` 可见范围收敛）、`require_superuser(detail)` 依赖工厂（仅超管，403）；测试用 `auth_headers` fixture（`tests/conftest.py`）。
+- 校验逻辑在 `app/core/auth.py`（`app/auth.py` 兼容重导出）：`get_current_user`（必须登录）、`get_optional_user`（可选登录，供 `GET /articles/` 可见范围收敛）、`require_superuser(detail)` 依赖工厂（仅超管，403）；测试用 `auth_headers` fixture（`tests/conftest.py`）。
 - 无注册接口，用户通过 `User.create_user`（Argon2）入库；测试里的 `default_user` 密码是 `test123`。
 
 ## 数据库建表
 
 - 表结构由 SQLModel 模型定义；`main.py` 的 lifespan 每次启动调用一次 `app/database.py:init_db()`，执行 `SQLModel.metadata.create_all` 自动建表（幂等，已存在的表跳过）。
-- `init_db()` 内部 `from app import model` 以注册全部模型——缺了这行 `create_all` 会建不出任何表。新增模型放进 `app/model/` 并在 `app/model/__init__.py` 导出即可。
+- 模型注册发生在 `app/core/database.py` 顶部的 `from app import model`（`app/database.py:init_db` 经导入链同样生效）——缺了这行 `create_all` 会建不出任何表。新增模型放进 `app/model/` 并在 `app/model/__init__.py` 导出即可。
 - `create_all` **不会修改已有表结构**：改字段后需对存量库手动执行 DDL，或清库重建。
 - `category.name` **允许重名**（无 DB 唯一约束、无应用层查重；不同父级下同名常见。注意：前端按名称匹配分类的配置取首个匹配，重名可能歧义）；分类硬删除后 name 可复用。分类表无 `slug` / `is_deleted` / `path` / `level` 字段。
 - 表间关联不使用数据库级外键，仅业务层关联（`article_category` 关联表）。

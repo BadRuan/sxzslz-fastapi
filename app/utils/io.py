@@ -40,6 +40,15 @@ def _remove_quietly(filepath: str) -> None:
         pass
 
 
+def file_error(index: int, file: UploadFile, cause: object) -> str:
+    """批量上传的逐文件错误文案：定位第几个文件、原始文件名与失败原因。
+
+    图片与文档批量上传共用，避免两处维护同一段文案。
+    """
+    filename = file.filename or "未命名"
+    return f"第 {index} 个文件「{filename}」：{cause}"
+
+
 def ensure_dirs(dirs: Iterable[str]) -> None:
     for d in dirs:
         makedirs(d, exist_ok=True)

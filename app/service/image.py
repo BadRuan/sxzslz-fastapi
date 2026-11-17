@@ -1,6 +1,4 @@
-import hashlib
 from os import path, remove
-from pathlib import Path
 from typing import Optional
 
 from fastapi import UploadFile
@@ -11,16 +9,10 @@ from app.dao import ImageCrud
 from app.errors import ServiceError
 from app.model import Image
 from app.model.image import generate_slug
-from app.schema import PageResponse, ImageOut, page_response
+from app.schema import ImageOut, PageResponse, page_response
 from app.settings import IMAGE_TYPE_LABEL, allow_type, settings, upload_dir
-from app.utils import (
-    FileTooLargeError,
-    StorageError,
-    ensure_dirs,
-    generate_webp_images,
-    storage_error_from,
-    write_upload_stream,
-)
+from app.service.file import BaseFileService, _UploadResult
+from app.utils import generate_webp_images, storage_error_from
 
 
 def ensure_image_type(content_type: str | None) -> None:
@@ -32,12 +24,59 @@ def ensure_image_type(content_type: str | None) -> None:
         )
 
 
-class ImageService:
+class ImageService(BaseFileService[Image]):
     def __init__(self, session: AsyncSession) -> None:
-        self.crud = ImageCrud(session)
+        super().__init__(
+            ImageCrud(session),
+            slug_factory=generate_slug,
+            max_bytes=settings.MAX_IMAGE_SIZE_MB * 1024 * 1024,
+            size_limit_msg=f"图片大小超过限制（最大 {settings.MAX_IMAGE_SIZE_MB}MB）",
+            dirs=(upload_dir.image_raw, upload_dir.image_preview),
+        )
+
+    def ensure_type(self, content_type: str | None) -> None:
+        ensure_image_type(content_type)
+
+    async def post_upload(
+        self, slugname: str, raw_path: str
+    ) -> _UploadResult:
+        # 计算原图 MD5，用于内容去重（在生成预览前，避免重复工作）
+        md5_value = _md5_file(raw_path)
+
+        # 已存在相同内容的图片：不重复落盘，复用已有记录
+        existing = await self.crud.get_by_md5(md5_value)
+        if existing is not None:
+            if path.isfile(raw_path):
+                remove(raw_path)
+            return _UploadResult(action="dedup_hit", record=existing)
+
+        # 生成预览图和缩略图（PIL 在线程池执行）；失败清理原图，不残留半成品
+        try:
+            await generate_webp_images(slugname)
+        except UnidentifiedImageError:
+            remove(raw_path)
+            raise ServiceError(
+                "不是有效的图片文件（内容可能已损坏或格式不符）"
+            ) from None
+        except OSError as exc:
+            remove(raw_path)
+            raise ServiceError(storage_error_from(exc)) from exc
+        except Exception as exc:
+            remove(raw_path)
+            raise ServiceError("图片处理失败，请更换图片后重试") from exc
+
+        return _UploadResult(action="proceed", md5=md5_value)
+
+    def remove_file(self, slugname: str) -> None:
+        # 先交给基类删除原图，再独立删除预览 webp
+        super().remove_file(slugname)
+        slug, _ = path.splitext(slugname)
+        preview_file_path = path.join(upload_dir.image_preview, slug + ".webp")
+        if path.isfile(preview_file_path):
+            remove(preview_file_path)
 
     async def list_paginated(
-        self, page: int, page_size: int, user_id: int | None = None
+        self, page: int, page_size: int, user_id: Optional[int] = None
     ) -> PageResponse[ImageOut]:
         items, total = await self.crud.list_paginated(page, page_size, user_id=user_id)
         return page_response(
@@ -47,113 +86,17 @@ class ImageService:
     async def add(
         self, filename: str, mime_type: str, file: UploadFile, user_id: int
     ) -> Optional[Image]:
-        ensure_image_type(mime_type)
-        suffix = Path(filename).suffix
-        slugname = generate_slug() + suffix
-        raw_path = path.join(upload_dir.image_raw, slugname)
-        # 只在真正落盘时确保目录存在（exist_ok，避免每个请求都建目录）
-        ensure_dirs((upload_dir.image_raw, upload_dir.image_preview))
-        try:
-            size = await write_upload_stream(
-                raw_path, file, max_bytes=settings.MAX_IMAGE_SIZE_MB * 1024 * 1024
-            )
-        except FileTooLargeError:
-            raise ServiceError(f"图片大小超过限制（最大 {settings.MAX_IMAGE_SIZE_MB}MB）")
-        except StorageError as exc:
-            raise ServiceError(str(exc)) from exc
-        if size == 0:
-            remove(raw_path)
-            raise ServiceError("文件内容为空")
-
-        # 计算原图 MD5，用于内容去重（在生成预览前，避免重复工作）
-        md5_value = _md5_file(raw_path)
-
-        # 已存在相同内容的图片：不重复落盘，复用已有记录
-        existing = await self.crud.get_by_md5(md5_value)
-        if existing is not None:
-            if path.isfile(raw_path):
-                remove(raw_path)
-            return existing
-
-        # 生成预览图和缩略图（PIL 在线程池执行）；失败清理原图，不残留半成品
-        try:
-            await generate_webp_images(slugname)
-        except UnidentifiedImageError:
-            remove(raw_path)
-            raise ServiceError("不是有效的图片文件（内容可能已损坏或格式不符）") from None
-        except OSError as exc:
-            remove(raw_path)
-            raise ServiceError(storage_error_from(exc)) from exc
-        except Exception as exc:
-            remove(raw_path)
-            raise ServiceError("图片处理失败，请更换图片后重试") from exc
-
-        await self.crud.add(
-            raw_filename=filename,
-            slug=slugname,
-            mime_type=mime_type,
-            size=size,
-            user_id=user_id,
-            md5=md5_value,
-        )
-        return await self.crud.get_by_slug(slugname)
+        return await super().add(filename, mime_type, file, user_id)
 
     async def add_many(self, files: list[UploadFile], user_id: int) -> list[Image]:
-        """多图同时上传：先整批校验类型，再逐个落盘。
-
-        整批原子：任一文件失败 → 抛 ServiceError（400），本批已落盘的图片文件
-        在异常路径立即清理，DB 记录随请求事务回滚，不留半成品。
-        """
-        if not files:
-            raise ServiceError("请至少选择一个文件")
-        if len(files) > settings.MAX_BATCH_FILES:
-            raise ServiceError(f"单次最多上传 {settings.MAX_BATCH_FILES} 个文件")
-        # 先整批校验类型，避免写入部分文件后才发现第 N 个文件类型非法
-        for index, file in enumerate(files, start=1):
-            try:
-                ensure_image_type(file.content_type)
-            except ServiceError as exc:
-                raise ServiceError(_file_error(index, file, exc)) from exc
-
-        images: list[Image] = []
-        try:
-            for index, file in enumerate(files, start=1):
-                try:
-                    image = await self.add(
-                        filename=file.filename or "default_name",
-                        mime_type=file.content_type or "",
-                        file=file,
-                        user_id=user_id,
-                    )
-                except ServiceError as exc:
-                    raise ServiceError(_file_error(index, file, exc)) from exc
-                if image is None:
-                    raise ServiceError(_file_error(index, file, "上传失败"))
-                images.append(image)
-        except Exception:
-            # 清理本批已写入的文件与记录；DB 由 get_session 统一 rollback
-            for image in images:
-                await self.remove_by_slug(image.slug)
-            raise
-        return images
+        return await super().add_many(files, user_id)
 
     async def find_by_slug(self, slugname: str) -> Optional[Image]:
         """只读查询，不自增 view（权限校验 / 改名前定位用）"""
         return await self.crud.get_by_slug(slugname)
 
     async def remove_by_slug(self, slugname: str) -> bool:
-        result = await self.crud.remove_by_slug(slugname)
-        if result:
-            slug, _ = path.splitext(slugname)
-            raw_file_path = path.join(upload_dir.image_raw, slugname)
-            preview_file_path = path.join(upload_dir.image_preview, slug + ".webp")
-            # 两个文件各自独立删除，避免 raw 缺失时预览图泄漏
-            if path.isfile(raw_file_path):
-                remove(raw_file_path)
-            if path.isfile(preview_file_path):
-                remove(preview_file_path)
-            return True
-        return False
+        return await self.remove(slugname)
 
     async def rename(self, slugname: str, raw_filename: str) -> Optional[Image]:
         """改展示名；记录不存在返回 None"""
@@ -170,13 +113,9 @@ class ImageService:
         return image
 
 
-def _file_error(index: int, file: UploadFile, cause: object) -> str:
-    """批量上传的逐文件错误文案：定位第几个文件、原始文件名与失败原因"""
-    filename = file.filename or "未命名"
-    return f"第 {index} 个文件「{filename}」：{cause}"
-
-
 def _md5_file(filepath: str) -> str:
+    import hashlib
+
     h = hashlib.md5()
     with open(filepath, "rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):

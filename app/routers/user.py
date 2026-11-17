@@ -6,10 +6,9 @@ from app.database import get_session
 from app.model import User
 from app.schema import PasswordResetOut, UserCreate, UserOut
 from app.service import UserService
+from app.types import ACCOUNT_MANAGE_FORBIDDEN
 
 router = APIRouter()
-
-ACCOUNT_MANAGE_FORBIDDEN = "仅超级管理员可管理用户账户"
 
 
 @router.post("/", response_model=UserOut, status_code=status.HTTP_201_CREATED)
