@@ -63,6 +63,19 @@ def _resolve_sort(
     return ArticleSort.create_at if current_user is None else ArticleSort.id
 
 
+def _normalize_keyword(keyword: Optional[str]) -> Optional[str]:
+    """列表标题搜索：None 表示不过滤；纯空白 → 422（与 /articles/search 口径一致）"""
+    if keyword is None:
+        return None
+    cleaned = keyword.strip()
+    if not cleaned:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="关键词不能为空",
+        )
+    return cleaned
+
+
 @router.post("/", response_model=ArticleDetailOut, status_code=status.HTTP_201_CREATED)
 async def create_article(
     data: ArticleCreate,
@@ -101,6 +114,12 @@ async def list_articles(
         default=False,
         description="false（默认）只返回未删除文章；true 只返回回收站文章（后台）",
     ),
+    keyword: Optional[str] = Query(
+        default=None,
+        min_length=1,
+        max_length=50,
+        description="按标题模糊搜索（1~50 字；空格分隔多词 AND；后台管理用它定位文章后编辑）",
+    ),
     sort: Optional[ArticleSort] = Query(
         default=None,
         description=(
@@ -114,6 +133,7 @@ async def list_articles(
     """可见范围：匿名=公开全量；普通用户=固定只返回自己的文章（user_id 参数被忽略）；
     超管=全部（可按 user_id 过滤 / is_deleted 查回收站）。
     排序：不传 sort 时，匿名（前台）默认 create_at 发布时间倒序；登录（后台）默认 id 倒序。
+    标题搜索：keyword 仅在上述可见范围内按标题过滤（后台管理定位文章后走 PATCH 编辑）。
     """
     resolved_sort = _resolve_sort(sort, current_user)
     service = ArticleService(session)
@@ -124,6 +144,7 @@ async def list_articles(
         _resolve_visible_user_id(user_id, current_user),
         is_deleted,
         order_by_field=resolved_sort.value,
+        keyword=_normalize_keyword(keyword),
     )
 
 

@@ -47,13 +47,21 @@ class ArticleService:
         user_id: Optional[int] = None,
         is_deleted: bool = False,
         order_by_field: Literal["id", "create_at"] = "create_at",
+        keyword: Optional[str] = None,
     ) -> PageResponse[ArticleOut]:
         """is_deleted=True 走后台回收站（只返回已删除文章）。
 
         order_by_field：'create_at'（默认，按发布时间倒序）/ 'id'（按发布 id 倒序）。
+        keyword：仅按标题模糊过滤（后台管理搜标题定位文章；多词 AND）。
         """
         items, total = await self.crud.list_paginated(
-            page, page_size, category_id, user_id, is_deleted, order_by_field
+            page,
+            page_size,
+            category_id,
+            user_id,
+            is_deleted,
+            order_by_field,
+            keyword,
         )
         return page_response(
             [ArticleOut.model_validate(a) for a in items], total, page, page_size

@@ -326,6 +326,7 @@ Content-Type: application/json
 5. **展示封面**：`<img src="/image/{cover_img_slug}">` 默认返回已压缩的 WebP 预览图；需要原图加 `?file_type=raw`。
 6. **列表分页**：`GET /articles/?page=1&page_size=20`，用响应中的 `has_next` 判断是否还有下一页；回收站文章由服务端过滤，`is_recommended` 由前端自行筛选展示。
 7. **搜索**：`GET /articles/search?keyword=泵站&scope=all`，返回纯文本摘要 `content_snippet` 与关键词列表 `matched_terms`，由前端完成高亮。
+8. **后台编辑定位**：管理端 `GET /articles/?keyword=泵站&sort=id` 按**标题**模糊搜索（多词 AND，只匹配标题；超管搜全量、普通用户只搜自己，回收站加 `is_deleted=true`），取返回的 `slug` 后 `PATCH /articles/{slug}` 编辑。
 
 ---
 
@@ -462,8 +463,9 @@ Content-Type: application/json
 | user_id | int | 无 | 按作者用户 id 过滤（后台展示登录账户的文章；**仅超管生效**，普通用户被强制收敛为本人） |
 | sort | `create_at` \| `id` | 按调用者 | 排序字段（均倒序）：`create_at`=发布时间；`id`=发布 id。不传时匿名默认 `create_at`、登录（后台管理）默认 `id` |
 | is_deleted | bool | false | `false` 只返回未删除文章；`true` 只返回回收站文章（后台用） |
+| keyword | string | 无 | 按**标题**模糊搜索（1~50 字；空格分隔多词 **AND**；大小写不敏感，`%`/`_` 按字面量）。后台管理用它定位文章后走 `PATCH /articles/{slug}` 编辑；仅在上述可见范围内过滤；纯空白或超 50 字 → `422` |
 
-示例：`GET /articles/?page=2&page_size=10&category_id=3&user_id=1`
+示例：`GET /articles/?page=2&page_size=10&category_id=3&user_id=1`；后台按标题定位：`GET /articles/?keyword=泵站&sort=id`
 
 > 后台管理列表默认 id 倒序；需要按日期排序时显式传 `sort=create_at`。前台新闻列表默认发布时间倒序，需要按创建顺序时传 `sort=id`。`create_at` 相同时按 `id` 倒序兜底，翻页顺序稳定。
 

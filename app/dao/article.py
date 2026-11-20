@@ -6,7 +6,7 @@ from sqlmodel import select, func, desc, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.errors import ServiceError
 from app.model import Article, ArticleCategory, Category
-from app.utils.search import escape_like
+from app.utils.search import escape_like, split_terms
 
 
 class ArticleCrud:
@@ -38,11 +38,13 @@ class ArticleCrud:
         user_id: Optional[int] = None,
         is_deleted: bool = False,
         order_by_field: Literal["id", "create_at"] = "create_at",
+        keyword: Optional[str] = None,
     ) -> Tuple[List[Article], int]:
         """is_deleted=False 只返回未删除文章（默认前台/后台列表）；
         is_deleted=True 只返回已删除文章（后台回收站）。
 
         order_by_field：'create_at'（默认，按发布时间倒序）/ 'id'（按发布 id 倒序）。
+        keyword：仅按标题模糊过滤（多词空格分隔，AND；大小写不敏感）。
         """
         base = select(Article).where(Article.is_deleted == is_deleted)
         if user_id is not None:
@@ -57,6 +59,11 @@ class ArticleCrud:
                 )
             )
             base = base.where(exists(related))
+        if keyword:
+            # 仅匹配标题：多个词之间 AND，每个词都需出现在标题中
+            for term in split_terms(keyword):
+                pattern = f"%{escape_like(term)}%"
+                base = base.where(Article.title.ilike(pattern, escape="\\"))
 
         count_stmt = select(func.count()).select_from(base.subquery())
         total: int = (await self.session.exec(count_stmt)).one()

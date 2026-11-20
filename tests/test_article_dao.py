@@ -139,6 +139,29 @@ async def test_list_paginated_filter_user(session, default_user):
     assert items == []
 
 
+async def test_list_paginated_filter_title_keyword(session, default_user):
+    """keyword 仅匹配标题（正文命中不算），多词 AND，大小写不敏感"""
+    crud = ArticleCrud(session)
+    matched = await crud.create(
+        title="FastAPI 泵站公告", content="无关正文", cover_img_slug=None,
+        is_recommended=False, user_id=default_user.id, category_ids=[],
+    )
+    await crud.create(
+        title="普通公告", content="正文里出现泵站", cover_img_slug=None,
+        is_recommended=False, user_id=default_user.id, category_ids=[],
+    )
+    await crud.create(
+        title="FastAPI 入门", content=None, cover_img_slug=None,
+        is_recommended=False, user_id=default_user.id, category_ids=[],
+    )
+
+    items, total = await crud.list_paginated(
+        page=1, page_size=10, keyword="fastapi 泵站"
+    )
+    assert total == 1
+    assert items[0].slug == matched.slug
+
+
 async def test_list_paginated_exact_match_no_subtree(session, default_user):
     """查询仅走二级分类：按一级分类查询不聚合子分类文章"""
     cat_crud = CategoryCrud(session)

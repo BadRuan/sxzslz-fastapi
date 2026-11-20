@@ -460,8 +460,9 @@ function showError(res) {
 | user_id | int | 无 | 按作者过滤（**仅超管生效**；普通用户被强制收敛为本人） |
 | sort | `create_at` \| `id` | 按调用者 | 排序字段（均倒序）：`create_at`=发布时间；`id`=发布 id。不传时匿名默认 `create_at`、登录（后台管理）默认 `id` |
 | is_deleted | bool | false | `false` 正常列表；`true` 回收站（后台用） |
+| keyword | string | 无 | 按**标题**模糊搜索（1~50 字；空格分隔多词 **AND**；大小写不敏感，`%`/`_` 按字面量）。后台管理用它定位文章后走 `PATCH /articles/{slug}` 编辑；仅在上述可见范围内过滤；纯空白或超 50 字 → `422` |
 
-示例：`GET /articles/?page=1&page_size=20&category_id=2`
+示例：`GET /articles/?page=1&page_size=20&category_id=2`；后台按标题定位：`GET /articles/?keyword=泵站&sort=id`
 
 > 后台管理列表默认 id 倒序；需要按日期排序时显式传 `sort=create_at`。前台新闻列表默认发布时间倒序，需要按创建顺序时传 `sort=id`。`create_at` 相同时按 `id` 倒序兜底，翻页顺序稳定。
 
@@ -498,6 +499,8 @@ function showError(res) {
 ```
 
 > 可见性由服务端统一过滤：前台永远拿不到已删文章；后台回收站传 `is_deleted=true`。
+>
+> **后台按标题定位编辑**：`GET /articles/?keyword=泵站&sort=id` 用 `keyword` 按标题模糊搜索（只匹配标题、多词 AND，可与 `user_id` / `category_id` / `is_deleted` 组合），取返回项的 `slug` 后走 `PATCH /articles/{slug}` 编辑。
 
 ### GET `/articles/search`
 
@@ -722,6 +725,16 @@ const trash = await get("/articles/?is_deleted=true");
 await post(`/articles/${slug}/restore`);
 // 3. 恢复后出现在正常列表
 const list = await get("/articles/");
+```
+
+### 后台按标题搜索定位编辑流程示例
+
+```js
+// 1. 按标题搜索（多词空格分隔 AND；超管搜全量，普通用户只搜自己）
+const { data } = await get("/articles/?keyword=" + encodeURIComponent("泵站 检修"));
+// 2. 取目标项 slug 后编辑（超管可同时改 title / content / category_ids / user_id / create_at）
+await patch(`/articles/${data[0].slug}`, { title: "新标题" });
+// 3. 回收站里先搜后恢复：GET /articles/?keyword=泵站&is_deleted=true → POST /articles/{slug}/restore
 ```
 
 ---
