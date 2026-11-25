@@ -1,11 +1,11 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_serializer
 
 
 class OperationLogOut(BaseModel):
-    """操作日志行（GET /logs/ 返回，仅超管可见）。"""
+    """操作日志行（GET /logs/ 返回；超管查全量，普通用户只看本人）。"""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -21,3 +21,8 @@ class OperationLogOut(BaseModel):
     message: Optional[str] = None
     client_ip: Optional[str] = None
     user_agent: Optional[str] = None
+
+    @field_serializer("created_at")
+    def serialize_created_at(self, value: datetime) -> str:
+        """序列化为含时分秒的展示格式（YYYY-MM-DD HH:MM:SS）。"""
+        return value.strftime("%Y-%m-%d %H:%M:%S")

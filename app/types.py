@@ -16,7 +16,6 @@ ARTICLE_NULLABLE_FIELDS: Final[FrozenSet[str]] = frozenset({"content", "cover_im
 # 分类写操作 / 用户账户管理专属 403 文案（各模块引用，统一文案）
 CATEGORY_MANAGE_FORBIDDEN: Final[str] = "仅超级管理员可管理文章分类"
 ACCOUNT_MANAGE_FORBIDDEN: Final[str] = "仅超级管理员可管理用户账户"
-LOG_QUERY_FORBIDDEN: Final[str] = "仅超级管理员可查看操作日志"
 
 # 文件（图片/文档）管理专属 403 文案
 FILE_FORBIDDEN: Final[str] = "无权限操作该文件"

@@ -79,7 +79,11 @@ class OperationService:
         page: int = 1,
         page_size: int = DEFAULT_PAGE_SIZE,
     ) -> PageResponse[OperationLogOut]:
-        """分页查询操作日志（仅超管路由调用）。"""
+        """分页查询操作日志（created_at desc, id desc）。
+
+        超管查全量（可按 operator_id 过滤）；普通用户的 operator_id 由路由层
+        强制收敛为本人后传入。
+        """
         rows, total = await OperationLogCrud(self.session).list_paginated(
             action=action,
             object_type=object_type,

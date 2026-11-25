@@ -283,7 +283,7 @@ Content-Type: application/json
 | POST | `/users/` | ✓ | 创建普通账户（仅超管，密码缺省 abc123） | `UserOut` |
 | POST | `/users/{id}/reset-password` | ✓ | 重置普通账户密码为 abc123（仅超管） | `{"detail": ...}` |
 | DELETE | `/users/{id}` | ✓ | 删除普通账户（仅超管，内容保留） | 204 空 |
-| GET | `/logs/` | ✓ | 操作日志分页查询（仅超管） | `PageResponse[OperationLogOut]` |
+| GET | `/logs/` | ✓ | 操作日志分页查询（超管查全量可按 operator_id 过滤；普通用户只看本人） | `PageResponse[OperationLogOut]` |
 | GET | `/base/` | ✗ | 首页基础信息（分类树 + 用户列表） | `BaseInfoOut` |
 | GET | `/base/storage` | ✓ | 站点容量（磁盘用量 + uploads 占用） | `StorageOut` |
 | GET | `/categories/` | ✗ | 分类列表（扁平） | `CategoryOut[]` |
@@ -1143,7 +1143,7 @@ files: <二进制文件2>
 
 ### OperationLogOut
 
-`GET /logs/` 的 `data` 元素（操作日志，仅超管）：
+`GET /logs/` 的 `data` 元素（操作日志；超管查全量，普通用户只看本人）：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -1153,7 +1153,7 @@ files: <二进制文件2>
 | object_name | string \| null | 对象展示名 |
 | operator_id | int \| null | 操作者用户 id |
 | operator_name | string \| null | 操作者用户名 |
-| created_at | datetime | 发生时间 |
+| created_at | string | 发生时间，`YYYY-MM-DD HH:MM:SS`（含时分秒） |
 | result | string | `success` / `failed` |
 | message | string \| null | 补充信息（失败原因等） |
 | client_ip | string \| null | 客户端 IP |

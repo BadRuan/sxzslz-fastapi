@@ -40,7 +40,7 @@
 
 - **角色**：`is_superuser=true` 为**超级管理员**（默认账号 `ruanfumin`），其余均为普通用户。登录后从 `/auth/me` 或 `/base/` 的 `user[].is_superuser` 判断。
 - **公开 GET**：文章列表/详情/搜索、图片本体 `GET /image/{slug}`、分类、`/base/`。
-- **需登录 GET**：图片列表 `GET /image/`、文件列表 `GET /document/`、文件下载 `GET /document/{slug}`。
+- **需登录 GET**：图片列表 `GET /image/`、文件列表 `GET /document/`、文件下载 `GET /document/{slug}`、操作日志 `GET /logs/`（超管查全量；普通用户固定只看**本人**日志）。
 - **写操作需登录**：分类/文章的 `POST` / `PATCH` / `DELETE`、图片/文件的 `POST` 上传、文件/图片的 `PATCH` / `DELETE`、修改密码；其中**分类管理、批量分类与用户账户管理（`/users`）仅超管**（普通用户 → 403）。
 - **权限边界（摘要）**：
   - 文章列表：**匿名** = 公开全量（前台）；**普通用户** = 固定只返回**自己**的文章（`user_id` 参数被忽略）；**超管** = 全量（可按 `user_id` 过滤、`is_deleted=true` 查回收站）。带非法/过期 token → `401`（不降级为匿名）。
@@ -49,6 +49,7 @@
   - 分类：`GET` 保持公开；**创建/修改/删除分类与批量分类仅超管**，普通用户 → `403 仅超级管理员可管理文章分类`。
   - 用户账户：超管可**创建普通账户**（密码缺省 `abc123`）、**删除普通账户**、**重置普通账户密码为 `abc123`**；超级管理员账户受保护。
   - 图片/文档列表：普通用户只见**自己上传的**；超管见全部。
+  - 操作日志 `GET /logs/`：**超管** = 全量（可按 `operator_id` 过滤）；**普通用户** = 固定只返回**本人**的操作日志（`operator_id` 参数被忽略）。
   - 文档下载：公开（无需登录）；改名/删除需本人或超管；图片本体公开（文章封面依赖）。
   - 文档/图片改名与删除：本人或超管。
 - 匿名例外：`POST /articles/{slug}/like`（点赞）无需 token。
@@ -257,7 +258,6 @@ function showError(res) {
 | `无权删除他人文章` / `无权恢复他人文章` | DELETE / restore 同上 |
 | `无权限操作该文件` | 图片/文档改名或删除非本人且非超管 |
 | `无权限查看该文件` | 下载他人文档 |
-| `仅超级管理员可查看操作日志` | 普通用户调用 `GET /logs/` |
 
 ### 常见 400 业务错误文案
 
@@ -1429,9 +1429,11 @@ async function deleteDocument(slug) {
 
 ## 10. 操作日志模块 `/logs`
 
-### GET `/logs/`（仅超管）
+### GET `/logs/`（需登录）
 
 分页查询**操作日志**（审计），按 `created_at` 倒序（同刻按 `id` 倒序）。日志在文章/图片/文档/用户等写操作时自动落库，记录操作类型、对象、操作者与客户端信息。
+
+**可见范围**：与 `GET /articles/` 同约定——**超管**查全量（可按 `operator_id` 过滤）；**普通用户**固定只看**本人**的操作日志（`operator_id` 参数被忽略）。
 
 **查询参数**：
 
@@ -1442,7 +1444,7 @@ async function deleteDocument(slug) {
 | action | string | 无 | 操作类型精确过滤，如 `create_article` / `update_article` / `delete_article` |
 | object_type | string | 无 | 对象类型精确过滤，如 `article` / `image` / `document` / `account` |
 | result | string | 无 | `success` / `failed` |
-| operator_id | int | 无 | 操作者用户 id（≥1） |
+| operator_id | int | 无 | 操作者用户 id（≥1）。**仅超管生效**；普通用户固定只看本人，传入被忽略 |
 
 **响应** `200`：`PageResponse[OperationLogOut]`，`data` 元素字段：
 
@@ -1455,7 +1457,7 @@ async function deleteDocument(slug) {
 | object_name | string \| null | 对象展示名（如标题/文件名） |
 | operator_id | int \| null | 操作者用户 id |
 | operator_name | string \| null | 操作者用户名 |
-| created_at | datetime | 发生时间 |
+| created_at | string | 发生时间，`YYYY-MM-DD HH:MM:SS`（含时分秒） |
 | result | string | `success` / `failed` |
 | message | string \| null | 补充信息（失败原因等） |
 | client_ip | string \| null | 客户端 IP（取 `X-Forwarded-For` 首值，否则直连地址） |
@@ -1463,7 +1465,6 @@ async function deleteDocument(slug) {
 
 **失败**：
 - `401`：未登录。
-- `403 {"detail": "仅超级管理员可查看操作日志"}`：普通用户调用。
 
 > 注：日志写入随主请求事务提交；主请求整体失败回滚时，该请求的失败日志也可能不落库（当前已知取舍）。
 
@@ -1608,7 +1609,7 @@ async function deleteDocument(slug) {
 | object_name | string \| null | 对象展示名 |
 | operator_id | int \| null | 操作者 id |
 | operator_name | string \| null | 操作者用户名 |
-| created_at | datetime | 发生时间 |
+| created_at | string | 发生时间，`YYYY-MM-DD HH:MM:SS`（含时分秒） |
 | result | string | `success` / `failed` |
 | message | string \| null | 补充信息 |
 | client_ip | string \| null | 客户端 IP |

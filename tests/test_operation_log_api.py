@@ -1,8 +1,10 @@
-"""GET /logs/ 操作日志超管查询 API 测试。
+"""GET /logs/ 操作日志查询 API 测试。
 
-覆盖：权限（401/403/200）、文章创建落日志、过滤、分页、
-日志写失败不影响主业务。
+覆盖：可见范围（匿名 401 / 普通用户只看本人 / 超管全量）、文章创建落日志、
+过滤、分页、created_at 含时分秒、日志写失败不影响主业务。
 """
+
+import re
 
 from app.dao import OperationLogCrud
 
@@ -20,17 +22,52 @@ async def _seed_logs(session, count: int, *, operator_id: int = 1):
         )
 
 
-async def test_logs_require_superuser(client, auth_headers, superadmin_headers):
+async def test_logs_visibility_by_role(client, auth_headers, superadmin_headers):
     # 匿名 → 401
     resp = await client.get("/logs/")
     assert resp.status_code == 401
-    # 普通用户 → 403
+    # 普通用户 → 200（只看本人，范围由 test_normal_user_sees_only_own_logs 锁定）
     resp = await client.get("/logs/", headers=auth_headers)
-    assert resp.status_code == 403
-    assert resp.json()["detail"] == "仅超级管理员可查看操作日志"
+    assert resp.status_code == 200
     # 超管 → 200
     resp = await client.get("/logs/", headers=superadmin_headers)
     assert resp.status_code == 200
+
+
+async def test_normal_user_sees_only_own_logs(
+    client, session, default_user, auth_headers, superadmin
+):
+    await _seed_logs(session, 2, operator_id=default_user.id)
+    await _seed_logs(session, 2, operator_id=superadmin.id)
+
+    resp = await client.get("/logs/", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 2
+    assert all(row["operator_id"] == default_user.id for row in body["data"])
+
+
+async def test_normal_user_operator_id_param_ignored(
+    client, session, default_user, auth_headers, superadmin
+):
+    await _seed_logs(session, 1, operator_id=default_user.id)
+    await _seed_logs(session, 1, operator_id=superadmin.id)
+
+    # 普通用户传他人 operator_id 也被强制收敛为本人（同 GET /articles/ 的 user_id 约定）
+    resp = await client.get(
+        "/logs/", params={"operator_id": superadmin.id}, headers=auth_headers
+    )
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["data"][0]["operator_id"] == default_user.id
+
+
+async def test_log_created_at_includes_time(client, session, superadmin, superadmin_headers):
+    await _seed_logs(session, 1, operator_id=superadmin.id)
+
+    resp = await client.get("/logs/", headers=superadmin_headers)
+    created_at = resp.json()["data"][0]["created_at"]
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", created_at), created_at
 
 
 async def test_logs_recorded_on_article_create(client, session, superadmin, superadmin_headers):
