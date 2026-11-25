@@ -5,6 +5,7 @@ from .image import router as image_router
 from .document import router as document_router
 from .article import router as article_router
 from .user import router as user_router
+from .operation_log import router as operation_log_router
 
 __all__ = [
     'auth_router',
@@ -13,5 +14,6 @@ __all__ = [
     'image_router',
     'document_router',
     'article_router',
-    'user_router'
+    'user_router',
+    'operation_log_router'
 ]

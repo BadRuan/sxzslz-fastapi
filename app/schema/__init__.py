@@ -40,6 +40,7 @@ from app.schema.file import (
     ImageUpdate,
     UploadResult,
 )
+from app.schema.operation_log import OperationLogOut
 from app.schema.system import StorageOut
 from app.schema.user import BaseInfoOut, PasswordResetOut, UserCreate, UserOut
 
@@ -68,6 +69,7 @@ __all__ = [
     "ImageOut",
     "ImageUpdate",
     "LoginRequest",
+    "OperationLogOut",
     "PageResponse",
     "PasswordChangeOut",
     "PasswordChangeRequest",

@@ -5,10 +5,14 @@
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional, Tuple
 
+from sqlalchemy import desc, func
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.model import OperationLog
+
+from app.types import DEFAULT_PAGE_SIZE
 
 
 class OperationLogCrud:
@@ -46,3 +50,39 @@ class OperationLogCrud:
         self.session.add(log)
         await self.session.flush()
         return log
+
+    async def list_paginated(
+        self,
+        *,
+        action: Optional[str] = None,
+        object_type: Optional[str] = None,
+        operator_id: Optional[int] = None,
+        result: Optional[str] = None,
+        page: int = 1,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> Tuple[List[OperationLog], int]:
+        """分页查询操作日志（created_at desc, id desc），条件全部可选。"""
+        conditions = []
+        if action is not None:
+            conditions.append(OperationLog.action == action)
+        if object_type is not None:
+            conditions.append(OperationLog.object_type == object_type)
+        if operator_id is not None:
+            conditions.append(OperationLog.operator_id == operator_id)
+        if result is not None:
+            conditions.append(OperationLog.result == result)
+
+        base = select(OperationLog)
+        if conditions:
+            base = base.where(*conditions)
+
+        count_stmt = select(func.count()).select_from(base.subquery())
+        total: int = (await self.session.exec(count_stmt)).one()
+
+        stmt = (
+            base.order_by(desc(OperationLog.created_at), desc(OperationLog.id))
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        rows = (await self.session.exec(stmt)).all()
+        return list(rows), total

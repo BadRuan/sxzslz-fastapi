@@ -15,6 +15,8 @@ from typing import Optional
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.dao import OperationLogCrud
+from app.schema import OperationLogOut, PageResponse, page_response
+from app.types import DEFAULT_PAGE_SIZE
 
 logger = logging.getLogger("sxzslz.operation")
 
@@ -63,3 +65,29 @@ class OperationService:
                 object_type,
                 object_id,
             )
+
+    async def list_paginated(
+        self,
+        *,
+        action: Optional[str] = None,
+        object_type: Optional[str] = None,
+        operator_id: Optional[int] = None,
+        result: Optional[str] = None,
+        page: int = 1,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> PageResponse[OperationLogOut]:
+        """分页查询操作日志（仅超管路由调用）。"""
+        rows, total = await OperationLogCrud(self.session).list_paginated(
+            action=action,
+            object_type=object_type,
+            operator_id=operator_id,
+            result=result,
+            page=page,
+            page_size=page_size,
+        )
+        return page_response(
+            [OperationLogOut.model_validate(row) for row in rows],
+            total,
+            page,
+            page_size,
+        )
