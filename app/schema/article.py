@@ -10,7 +10,8 @@ from app.schema.user import UserOut
 
 
 class ArticleSort(str, Enum):
-    """GET /articles/ 排序字段（均为倒序）；未传时匿名默认 create_at、登录默认 id"""
+    """GET /articles/ 排序字段（均为倒序）；未传时带 user_id 过滤（查看用户文章）默认 create_at，
+    否则匿名默认 create_at、登录默认 id"""
 
     create_at = "create_at"  # 按发布时间倒序（前台新闻列表默认）
     id = "id"  # 按发布 id 倒序（后台管理默认，最新创建在前）

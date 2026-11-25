@@ -296,7 +296,12 @@ function showError(res) {
 
 ## 4. 分页约定
 
-所有列表接口统一：
+分页有两套，按页面形态选用：
+
+- **无限滚动**（文章列表、查看用户文章）：走 `GET /articles/infinite` 游标翻页，见 [7. 文章模块](#7-文章模块-articles)；
+- **传统分页**（搜索结果、后台管理列表、回收站、图片/文档/日志列表）：走下面的 `page`/`page_size` 偏移分页。
+
+传统分页所有列表接口统一：
 
 **查询参数**：`page`（默认 1，≥1）、`page_size`（图片/文件默认 30，文章默认 20，范围 1~100）。
 
@@ -308,11 +313,23 @@ function showError(res) {
   "total": 265,
   "page": 1,
   "page_size": 20,
-  "has_next": true
+  "has_next": true,
+  "total_pages": 14
 }
 ```
 
-> `page` 超出范围时 `data` 为空数组，不报错。`has_next = page * page_size < total`。
+> `page` 超出范围时 `data` 为空数组，不报错。`has_next = page * page_size < total`。`total_pages = ceil(total / page_size)`（`total=0` 时为 0）。
+
+**翻页条约定**（首页 / 上一页 / 下一页 / 尾页直接跳转，典型用于搜索结果页）：
+
+| 按钮 | 请求参数 | 边界处理 |
+|---|---|---|
+| 首页 | `page=1` | 恒可用 |
+| 上一页 | `page=max(1, page-1)` | `page=1` 时禁用 |
+| 下一页 | `page=page+1` | 仅 `has_next=true` 时可用 |
+| 尾页 | `page=total_pages` | `total_pages=0`（无结果）时禁用 |
+
+跳转后以响应里的 `page` 为准刷新当前页码；`total_pages` 直接取自响应，无需前端自行推导。
 
 ---
 
@@ -465,7 +482,9 @@ function showError(res) {
 
 ### GET `/articles/`
 
-分页列表。**默认排序按调用者区分**：匿名（前台新闻列表）按 `create_at` 发布时间倒序（最新发布在前）；登录态（后台管理）按 `id` 发布 id 倒序（最新创建在前）。两种方式都可用 `sort` 显式选择。
+分页列表（传统分页）。**用途：后台管理列表、回收站、按标题定位编辑**——前台文章列表与查看用户文章统一走无限滚动 [`GET /articles/infinite`](#get-articlesinfinite)。
+
+**默认排序**：带 `user_id` 过滤（查看用户文章）时按 `create_at` 发布时间倒序（最新发布在前）；否则按调用者区分——匿名（前台新闻列表）按 `create_at` 发布时间倒序；登录态（后台管理）按 `id` 发布 id 倒序（最新创建在前）。任何情况都可用 `sort` 显式选择。
 
 **可见范围**（按调用者身份收敛）：
 
@@ -485,13 +504,13 @@ function showError(res) {
 | page_size | int | 20 | 每页条数（1~100） |
 | category_id | int | 无 | 按**二级分类** id 精确过滤（不聚合一级分类下的子分类） |
 | user_id | int | 无 | 按作者过滤（**仅超管生效**；普通用户被强制收敛为本人） |
-| sort | `create_at` \| `id` | 按调用者 | 排序字段（均倒序）：`create_at`=发布时间；`id`=发布 id。不传时匿名默认 `create_at`、登录（后台管理）默认 `id` |
+| sort | `create_at` \| `id` | 按场景 | 排序字段（均倒序）：`create_at`=发布时间；`id`=发布 id。不传时：带 `user_id` 过滤（查看用户文章）默认 `create_at`；否则匿名默认 `create_at`、登录（后台管理）默认 `id` |
 | is_deleted | bool | false | `false` 正常列表；`true` 回收站（后台用） |
 | keyword | string | 无 | 按**标题**模糊搜索（1~50 字；空格分隔多词 **AND**；大小写不敏感，`%`/`_` 按字面量）。后台管理用它定位文章后走 `PATCH /articles/{slug}` 编辑；仅在上述可见范围内过滤；纯空白或超 50 字 → `422` |
 
 示例：`GET /articles/?page=1&page_size=20&category_id=2`；后台按标题定位：`GET /articles/?keyword=泵站&sort=id`
 
-> 后台管理列表默认 id 倒序；需要按日期排序时显式传 `sort=create_at`。前台新闻列表默认发布时间倒序，需要按创建顺序时传 `sort=id`。`create_at` 相同时按 `id` 倒序兜底，翻页顺序稳定。
+> 后台管理列表默认 id 倒序；需要按日期排序时显式传 `sort=create_at`。前台新闻列表默认发布时间倒序，需要按创建顺序时传 `sort=id`。带 `user_id` 过滤（查看用户文章）默认发布时间倒序，与无限滚动接口一致。`create_at` 相同时按 `id` 倒序兜底，翻页顺序稳定。
 
 **响应** `200`（列表**不含 `content`**）：
 
@@ -521,7 +540,8 @@ function showError(res) {
   "total": 2,
   "page": 1,
   "page_size": 20,
-  "has_next": false
+  "has_next": false,
+  "total_pages": 1
 }
 ```
 
@@ -532,6 +552,8 @@ function showError(res) {
 ### GET `/articles/search`
 
 公开搜索标题与正文，支持多关键词（空格分隔，**AND**：每个词都要命中）。结果**统一按发布时间倒序**（`create_at`、`id` 均倒序），不按相关度或命中字段加权；仅返回未删除文章，且**始终为公开全量**（不因 token 收敛为本人文章）。
+
+**分页方式：传统分页**（非无限滚动）。搜索结果页配翻页条（首页 / 上一页 / 下一页 / 尾页直接跳转），按 [4. 分页约定](#4-分页约定) 的翻页条表格实现：首页 `page=1`、上一页 `page=max(1, page-1)`、下一页 `page=page+1`（`has_next=true` 时可用）、尾页 `page=total_pages`（直接取响应里的 `total_pages`）。
 
 **查询参数**：
 
@@ -545,7 +567,7 @@ function showError(res) {
 
 示例：`GET /articles/search?keyword=泵站%20托管&scope=content&page=1&page_size=20`
 
-**响应** `200`：`PageResponse[ArticleSearchOut]`。`ArticleSearchOut` 继承 `ArticleOut`，额外返回：
+**响应** `200`：`ArticleSearchPageOut`（= `PageResponse[ArticleSearchOut]` + `elapsed_ms` 耗时毫秒）。`ArticleSearchOut` 继承 `ArticleOut`，额外返回：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -582,7 +604,9 @@ function showError(res) {
   "total": 1,
   "page": 1,
   "page_size": 20,
-  "has_next": false
+  "has_next": false,
+  "total_pages": 1,
+  "elapsed_ms": 1.2
 }
 ```
 
@@ -596,7 +620,9 @@ function showError(res) {
 
 ### GET `/articles/infinite`
 
-无限滚动**游标翻页**列表，可见范围与 [GET `/articles/`](#get-articles) 完全一致（匿名=公开全量；普通用户=固定只看自己；超管=全量可过滤）。与 `page` 分页互斥使用。
+无限滚动**游标翻页**列表，可见范围与 [GET `/articles/`](#get-articles) 完全一致（匿名=公开全量；普通用户=固定只看自己；超管=全量可过滤）。
+
+**这是前台文章列表与「查看用户文章」的正式加载方式（无限滚动）**：文章列表首页/滚动加载、用户主页文章列表都用它；`GET /articles/` 的 `page` 分页留给后台管理列表、回收站与搜索定位，两者不要混用在同一页面流。
 
 **查询参数**：
 
@@ -608,7 +634,7 @@ function showError(res) {
 | user_id | int | 无 | 按作者过滤（仅超管生效，普通用户被强制收敛为本人） |
 | is_deleted | bool | false | `true` 时查回收站 |
 | keyword | string | 无 | 标题模糊搜索（多词空格分隔 AND，1~50 字） |
-| sort | `create_at` \| `id` | 按调用者 | 排序字段，均为**倒序**：不传时匿名默认 `create_at`、登录默认 `id`（同 `GET /articles/`） |
+| sort | `create_at` \| `id` | 按场景 | 排序字段，均为**倒序**：不传时带 `user_id` 过滤（查看用户文章）默认 `create_at`；否则匿名默认 `create_at`、登录默认 `id`（同 `GET /articles/`） |
 
 **响应** `200`：`ArticleInfiniteOut`：
 
@@ -629,9 +655,11 @@ function showError(res) {
 ```
 
 **游标翻页用法**：
-1. 首页 `GET /articles/infinite?limit=20`（不传 `cursor`）；
+1. 文章列表首页 `GET /articles/infinite?limit=20`（不传 `cursor`）；
 2. `has_more=true` 时把 `next_cursor` 原样拼进下一次请求 `?cursor=…`；`has_more=false` 表示到底（`next_cursor` 为 `null`）；
 3. 游标是**不透明串**，按 `(排序字段, id)` 双键定位：同一发布时间的多篇文章翻页**不重复、不遗漏**；`sort` 或过滤条件变了就从第一页重新开始。
+
+**查看用户文章**：`GET /articles/infinite?user_id=<作者id>&limit=20`，同样无限滚动到底。不传 `sort` 时**默认按发布时间倒序**（该作者最新发布在前），滚动追加 `next_cursor` 翻页；超管可看任意作者，普通用户只能看自己（`user_id` 被强制收敛为本人，见下方可见范围说明）。示例：`GET /articles/infinite?user_id=20&limit=20`。
 
 **失败**：
 - `400 {"detail": "无效的游标"}`：`cursor` 格式非法（无法解析或缺键）。注意游标**不防篡改**：它是不带签名的定位锚点，伪造的游标只可能把翻页窗口移到你可见范围内的任意位置，可见范围始终由服务端收敛。
@@ -1105,7 +1133,8 @@ files: <二进制图片 2>
   "total": 1,
   "page": 1,
   "page_size": 30,
-  "has_next": false
+  "has_next": false,
+  "total_pages": 1
 }
 ```
 
@@ -1309,7 +1338,8 @@ files: <二进制文件 2>
   "total": 1,
   "page": 1,
   "page_size": 30,
-  "has_next": false
+  "has_next": false,
+  "total_pages": 1
 }
 ```
 
@@ -1538,6 +1568,7 @@ async function deleteDocument(slug) {
 | page | int | 当前页码 |
 | page_size | int | 每页条数 |
 | has_next | bool | 是否有下一页 |
+| total_pages | int | 总页数 `ceil(total/page_size)`（`total=0` 时为 0）；尾页跳转传 `page=total_pages` |
 
 ---
 

@@ -14,7 +14,7 @@
 | 路径尾斜杠 | 集合类路径**必须带尾斜杠**（`/articles/`、`/categories/`、`/base/` 等）。不带会返回 `307` 跳转，部分客户端对 `307` + 请求体的处理不一致 |
 | 请求编码 | JSON 接口 `Content-Type: application/json`；上传接口 `multipart/form-data`。单文件上传字段名固定为 `file`；批量上传字段名固定为 `files`（同名 part 重复） |
 | 时间字段 | `create_at` / `uploaded_at` 为 ISO 8601 **本地时间、无时区后缀**（如 `2026-09-24T11:22:01.682832`），按服务器时区理解（Docker 镜像固定 `Asia/Shanghai`） |
-| 分页 | 所有列表接口返回统一 `PageResponse`；`page` 超出范围时 `data` 为空数组，不报错 |
+| 分页 | 列表接口统一 `PageResponse`（含 `total_pages`，支持首页/上一页/下一页/尾页直接跳转）；`page` 超出范围时 `data` 为空数组，不报错。**文章列表与查看用户文章走无限滚动** `GET /articles/infinite`（游标 `ArticleInfiniteOut`） |
 | 跨域 | 浏览器联调时前端源必须包含在服务端 `CORS_ORIGINS`（逗号分隔），否则被 CORS 拦截 |
 | 上传大小 | 服务端强制限制：图片默认 **30MB**（`MAX_IMAGE_SIZE_MB`）、文档默认 **50MB**（`MAX_DOCUMENT_SIZE_MB`），超出返回 `400`；空文件返回 `400 文件内容为空`。进度条与取消见 `docs/frontend-api.md` 的 `uploadWithProgress` |
 | 鉴权方式 | 文章列表/详情/搜索、分类、图片本体等 **GET 公开**；图片列表、文档列表/下载、全部写操作需 `Authorization: Bearer <token>`。超管（`is_superuser`，默认账号 `ruanfumin`）可管理全部资源，见[角色权限](#角色权限) |
@@ -292,8 +292,8 @@ Content-Type: application/json
 | PATCH | `/categories/{id}` | ✓ | 修改分类 | `CategoryOut` |
 | DELETE | `/categories/{id}` | ✓ | 删除分类（级联删除子分类） | 204 空 |
 | GET | `/articles/` | ✗ | 文章分页列表 | `PageResponse[ArticleOut]` |
-| GET | `/articles/search` | ✗ | 标题/正文关键词搜索（多词 AND，按发布时间倒序） | `PageResponse[ArticleSearchOut]` |
-| GET | `/articles/infinite` | ✗ | 无限滚动游标翻页（可见范围同 `GET /articles/`） | `ArticleInfiniteOut` |
+| GET | `/articles/search` | ✗ | 标题/正文关键词搜索（多词 AND，按发布时间倒序；传统分页+翻页条） | `ArticleSearchPageOut`（= `PageResponse[ArticleSearchOut]` + `elapsed_ms`） |
+| GET | `/articles/infinite` | ✗ | 无限滚动游标翻页（可见范围同 `GET /articles/`；**文章列表/查看用户文章的正式加载方式**） | `ArticleInfiniteOut` |
 | GET | `/articles/stats` | ✓ | 发布量统计（超管=本月新增 / 普通=我的近半月发布） | `ArticleStatsOut` |
 | POST | `/articles/` | ✓ | 创建文章（超管可指定作者/时间） | `ArticleDetailOut` |
 | POST | `/articles/batch-category` | ✓ | 批量加入/移出分类 | `ArticleBatchCategoryOut` |
@@ -317,7 +317,7 @@ Content-Type: application/json
 
 > 响应模型与[数据模型](#数据模型)章节一一对应；标 ✓ 的接口需携带 `Authorization: Bearer <token>`。
 
-**无限滚动游标翻页**（`GET /articles/infinite`）：首页不传 `cursor`，把响应里的 `next_cursor` 原样拼进下一次请求 `?cursor=…`，`has_more=false` 表示到底。游标是不透明串，按 `(排序字段, id)` 双键定位，同一发布时间的多篇文章翻页不重复、不遗漏；`sort`/过滤条件变化后从第一页重新开始。游标格式非法（无法解析或缺键）→ `400 无效的游标`；游标仅为定位锚点，不带签名、**不防篡改**（伪造游标只影响翻页位置，可见范围始终由服务端收敛）。详见 [frontend-api.md](docs/frontend-api.md) 对应章节。
+**无限滚动游标翻页**（`GET /articles/infinite`）：**前台文章列表与「查看用户文章」的正式加载方式**——首页不传 `cursor`，把响应里的 `next_cursor` 原样拼进下一次请求 `?cursor=…`，`has_more=false` 表示到底。查看用户文章传 `user_id=<作者id>`，默认按发布时间倒序（该作者最新发布在前）。游标是不透明串，按 `(排序字段, id)` 双键定位，同一发布时间的多篇文章翻页不重复、不遗漏；`sort`/过滤条件变化后从第一页重新开始。游标格式非法（无法解析或缺键）→ `400 无效的游标`；游标仅为定位锚点，不带签名、**不防篡改**（伪造游标只影响翻页位置，可见范围始终由服务端收敛）。详见 [frontend-api.md](docs/frontend-api.md) 对应章节。
 
 ---
 
@@ -330,8 +330,8 @@ Content-Type: application/json
 3. **传封面**：`POST /image/`（`multipart/form-data`，字段名 `file`）→ 返回 `slug`。
 4. **建文章**：`POST /articles/`，`cover_img_slug` 填上一步的 `slug`，`category_ids` 填二级分类 id 数组。
 5. **展示封面**：`<img src="/image/{cover_img_slug}">` 默认返回已压缩的 WebP 预览图；需要原图加 `?file_type=raw`。
-6. **列表分页**：`GET /articles/?page=1&page_size=20`，用响应中的 `has_next` 判断是否还有下一页；回收站文章由服务端过滤，`is_recommended` 由前端自行筛选展示。
-7. **搜索**：`GET /articles/search?keyword=泵站&scope=all`，返回纯文本摘要 `content_snippet` 与关键词列表 `matched_terms`，由前端完成高亮。
+6. **文章列表（无限滚动）**：`GET /articles/infinite?limit=20`，`has_more=true` 时用响应里的 `next_cursor` 追加下一批，到底为止；查看用户文章 `GET /articles/infinite?user_id=<作者id>`，默认按发布时间倒序。回收站文章由服务端过滤，`is_recommended` 由前端自行筛选展示。后台管理列表/回收站/按标题定位才用 `GET /articles/?page=…`（`page` 分页）。
+7. **搜索（传统分页）**：`GET /articles/search?keyword=泵站&scope=all`，返回纯文本摘要 `content_snippet` 与关键词列表 `matched_terms`，由前端完成高亮；结果页配翻页条——首页 `page=1`、上一页 `page=max(1,page-1)`、下一页 `page=page+1`（`has_next=true` 时可用）、尾页 `page=total_pages`。
 8. **后台编辑定位**：管理端 `GET /articles/?keyword=泵站&sort=id` 按**标题**模糊搜索（多词 AND，只匹配标题；超管搜全量、普通用户只搜自己，回收站加 `is_deleted=true`），取返回的 `slug` 后 `PATCH /articles/{slug}` 编辑。
 
 ---
@@ -457,7 +457,7 @@ Content-Type: application/json
 
 ### GET `/articles/`
 
-分页获取文章列表，支持按分类过滤。**默认排序按调用者区分**：匿名（前台新闻列表）按 `create_at` 发布时间倒序（最新发布在前）；登录态（后台管理）按 `id` 发布 id 倒序（最新创建在前）。两种方式都可用 `sort` 显式选择。
+分页获取文章列表，支持按分类过滤。**默认排序**：带 `user_id` 过滤（查看用户文章）时按 `create_at` 发布时间倒序（最新发布在前）；否则按调用者区分——匿名（前台新闻列表）按 `create_at` 发布时间倒序；登录态（后台管理）按 `id` 发布 id 倒序（最新创建在前）。任何情况都可用 `sort` 显式选择。前台文章列表/查看用户文章走无限滚动 `GET /articles/infinite`，本接口用于后台管理列表、回收站与按标题定位。
 
 **查询参数**：
 
@@ -467,13 +467,13 @@ Content-Type: application/json
 | page_size | int | 20 | 每页条数（1 ~ 100） |
 | category_id | int | 无 | 按**二级分类** id 精确过滤（不聚合一级分类下的子分类） |
 | user_id | int | 无 | 按作者用户 id 过滤（后台展示登录账户的文章；**仅超管生效**，普通用户被强制收敛为本人） |
-| sort | `create_at` \| `id` | 按调用者 | 排序字段（均倒序）：`create_at`=发布时间；`id`=发布 id。不传时匿名默认 `create_at`、登录（后台管理）默认 `id` |
+| sort | `create_at` \| `id` | 按场景 | 排序字段（均倒序）：`create_at`=发布时间；`id`=发布 id。不传时：带 `user_id` 过滤（查看用户文章）默认 `create_at`；否则匿名默认 `create_at`、登录（后台管理）默认 `id` |
 | is_deleted | bool | false | `false` 只返回未删除文章；`true` 只返回回收站文章（后台用） |
 | keyword | string | 无 | 按**标题**模糊搜索（1~50 字；空格分隔多词 **AND**；大小写不敏感，`%`/`_` 按字面量）。后台管理用它定位文章后走 `PATCH /articles/{slug}` 编辑；仅在上述可见范围内过滤；纯空白或超 50 字 → `422` |
 
 示例：`GET /articles/?page=2&page_size=10&category_id=3&user_id=1`；后台按标题定位：`GET /articles/?keyword=泵站&sort=id`
 
-> 后台管理列表默认 id 倒序；需要按日期排序时显式传 `sort=create_at`。前台新闻列表默认发布时间倒序，需要按创建顺序时传 `sort=id`。`create_at` 相同时按 `id` 倒序兜底，翻页顺序稳定。
+> 后台管理列表默认 id 倒序；需要按日期排序时显式传 `sort=create_at`。前台新闻列表默认发布时间倒序，需要按创建顺序时传 `sort=id`。带 `user_id` 过滤（查看用户文章）默认发布时间倒序，与无限滚动接口一致。`create_at` 相同时按 `id` 倒序兜底，翻页顺序稳定。
 
 > 可见性由服务端的 `is_deleted` 统一过滤：前台/普通列表永远拿不到已删文章，后台回收站传 `is_deleted=true` 即可枚举被删文章再恢复。
 
@@ -505,7 +505,8 @@ Content-Type: application/json
   "total": 265,
   "page": 1,
   "page_size": 20,
-  "has_next": true
+  "has_next": true,
+  "total_pages": 14
 }
 ```
 
@@ -514,6 +515,8 @@ Content-Type: application/json
 ### GET `/articles/search`
 
 公开搜索标题与正文，多关键词用空格分隔（**AND**：每个词都要命中）。结果**统一按发布时间倒序**（`create_at`、`id` 均倒序），不做相关度加权。仅返回未删除文章；搜索范围始终是公开全量，**不因携带 token 收敛为本人文章**。
+
+**分页方式：传统分页**（非无限滚动）。搜索结果页配翻页条（首页 / 上一页 / 下一页 / 尾页直接跳转）：首页 `page=1`、上一页 `page=max(1, page-1)`、下一页 `page=page+1`（`has_next=true` 时可用）、尾页 `page=total_pages`（取响应里的 `total_pages`）。
 
 **查询参数**：
 
@@ -527,7 +530,7 @@ Content-Type: application/json
 
 示例：`GET /articles/search?keyword=泵站%20托管&scope=all&page=1&page_size=20`
 
-**响应** `200`：`PageResponse[ArticleSearchOut]`（在 `ArticleOut` 基础上增加摘要字段）：
+**响应** `200`：`ArticleSearchPageOut`（= `PageResponse[ArticleSearchOut]` + `elapsed_ms` 耗时毫秒；`ArticleSearchOut` 在 `ArticleOut` 基础上增加摘要字段）：
 
 ```json
 {
@@ -558,7 +561,9 @@ Content-Type: application/json
   "total": 1,
   "page": 1,
   "page_size": 20,
-  "has_next": false
+  "has_next": false,
+  "total_pages": 1,
+  "elapsed_ms": 1.2
 }
 ```
 
@@ -818,7 +823,8 @@ files: <二进制图片2>
   "total": 50,
   "page": 1,
   "page_size": 30,
-  "has_next": true
+  "has_next": true,
+  "total_pages": 2
 }
 ```
 
@@ -958,7 +964,8 @@ files: <二进制文件2>
   "total": 40,
   "page": 1,
   "page_size": 30,
-  "has_next": true
+  "has_next": true,
+  "total_pages": 2
 }
 ```
 
@@ -1100,6 +1107,7 @@ files: <二进制文件2>
 | page | int | 当前页码 |
 | page_size | int | 每页条数 |
 | has_next | bool | 是否有下一页 |
+| total_pages | int | 总页数 `ceil(total / page_size)`（`total=0` 时为 0）；尾页直接跳转传 `page=total_pages` |
 
 ### ArticleInfiniteOut
 

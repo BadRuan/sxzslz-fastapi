@@ -387,3 +387,27 @@ async def test_search_rejects_missing_blank_or_too_long_keyword(client):
             "/articles/search", params={"keyword": "泵站", "scope": "author"}
         )
     ).status_code == 422
+
+
+async def test_search_total_pages_supports_last_page_jump(
+    client, session, default_user
+):
+    """搜索结果传统分页：total_pages 指示尾页，page=total_pages 直接跳尾页"""
+    now = datetime.now(timezone.utc)
+    articles = [
+        await _create_article(
+            session,
+            default_user.id,
+            title=f"泵站尾页文章{index}",
+            create_at=now - timedelta(hours=index),
+        )
+        for index in range(3)
+    ]
+
+    first_page = await _search(client, keyword="泵站", page=1, page_size=2)
+    assert first_page["total"] == 3
+    assert first_page["total_pages"] == 2
+
+    last_page = await _search(client, keyword="泵站", page=2, page_size=2)
+    assert last_page["has_next"] is False
+    assert [item["slug"] for item in last_page["data"]] == [articles[2].slug]

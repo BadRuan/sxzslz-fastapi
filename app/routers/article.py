@@ -56,13 +56,19 @@ def _resolve_visible_user_id(
 
 
 def _resolve_sort(
-    requested_sort: Optional[ArticleSort], current_user: Optional[User]
+    requested_sort: Optional[ArticleSort],
+    current_user: Optional[User],
+    *,
+    by_user: bool = False,
 ) -> ArticleSort:
-    """未显式传 sort 时按调用者取默认：匿名（前台新闻列表）按发布时间倒序；
-    登录态（后台管理）按发布 id 倒序。显式传参优先。"""
+    """未显式传 sort 时取默认：查看用户文章（请求带 user_id 过滤）按发布时间倒序；
+    否则匿名（前台新闻列表）按发布时间倒序、登录态（后台管理）按发布 id 倒序。
+    显式传参优先。"""
     if requested_sort is not None:
         return requested_sort
-    return ArticleSort.create_at if current_user is None else ArticleSort.id
+    if by_user or current_user is None:
+        return ArticleSort.create_at
+    return ArticleSort.id
 
 
 def _normalize_keyword(keyword: Optional[str]) -> Optional[str]:
@@ -135,7 +141,8 @@ async def list_articles(
         default=None,
         description=(
             "排序字段（均倒序）：create_at=发布时间 / id=发布 id；"
-            "不传时匿名默认 create_at、登录（后台管理）默认 id"
+            "不传时：带 user_id 过滤（查看用户文章）默认 create_at，"
+            "否则匿名默认 create_at、登录（后台管理）默认 id"
         ),
     ),
     session: AsyncSession = Depends(get_session),
@@ -143,10 +150,11 @@ async def list_articles(
 ):
     """可见范围：匿名=公开全量；普通用户=固定只返回自己的文章（user_id 参数被忽略）；
     超管=全部（可按 user_id 过滤 / is_deleted 查回收站）。
-    排序：不传 sort 时，匿名（前台）默认 create_at 发布时间倒序；登录（后台）默认 id 倒序。
+    排序：不传 sort 时，带 user_id 过滤（查看用户文章）默认 create_at 发布时间倒序；
+    否则匿名（前台）默认 create_at 发布时间倒序、登录（后台）默认 id 倒序。
     标题搜索：keyword 仅在上述可见范围内按标题过滤（后台管理定位文章后走 PATCH 编辑）。
     """
-    resolved_sort = _resolve_sort(sort, current_user)
+    resolved_sort = _resolve_sort(sort, current_user, by_user=user_id is not None)
     service = ArticleService(session)
     return await service.list_paginated(
         page,
@@ -240,7 +248,8 @@ async def list_articles_infinite(
         default=None,
         description=(
             "排序字段（均倒序）：create_at=发布时间 / id=发布 id；"
-            "不传时匿名默认 create_at、登录（后台管理）默认 id"
+            "不传时：带 user_id 过滤（查看用户文章）默认 create_at，"
+            "否则匿名默认 create_at、登录（后台管理）默认 id（同 GET /articles/）"
         ),
     ),
     session: AsyncSession = Depends(get_session),
@@ -250,6 +259,8 @@ async def list_articles_infinite(
 
     可见范围与 GET /articles/ 完全一致：匿名=公开全量；普通用户=固定只返回自己的
     文章（user_id 参数被忽略）；超管=全部（可过滤）。非法 cursor → 400。
+    排序默认规则与 GET /articles/ 一致：带 user_id 过滤（查看用户文章）默认发布时间
+    倒序；否则匿名默认发布时间倒序、登录（后台管理）默认 id 倒序。显式传 sort 优先。
     """
     return await ArticleService(session).list_infinite(
         limit,
@@ -257,7 +268,7 @@ async def list_articles_infinite(
         category_id,
         _resolve_visible_user_id(user_id, current_user),
         is_deleted,
-        order_by_field=_resolve_sort(sort, current_user).value,
+        order_by_field=_resolve_sort(sort, current_user, by_user=user_id is not None).value,
         keyword=_normalize_keyword(keyword),
     )
 

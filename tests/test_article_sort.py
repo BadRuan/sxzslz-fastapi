@@ -120,3 +120,53 @@ async def test_trash_list_sort_default_and_date(
         )
     ).json()
     assert [item["slug"] for item in by_date["data"]] == [newer.slug, older.slug]
+
+
+async def test_user_filter_defaults_to_create_at_desc_for_logged_in(
+    client, session, default_user, auth_headers
+):
+    """查看用户文章（带 user_id 过滤）：登录态也默认按发布时间倒序"""
+    newer, older = await _seed_reversed_order(session, default_user.id)
+    resp = (
+        await client.get(f"/articles/?user_id={default_user.id}", headers=auth_headers)
+    ).json()
+    assert [item["slug"] for item in resp["data"]] == [newer.slug, older.slug]
+
+
+async def test_user_filter_defaults_to_create_at_desc_for_superadmin(
+    client, session, default_user, superadmin_headers
+):
+    """超管按作者过滤查看用户文章：默认同样按发布时间倒序"""
+    newer, older = await _seed_reversed_order(session, default_user.id)
+    resp = (
+        await client.get(
+            f"/articles/?user_id={default_user.id}", headers=superadmin_headers
+        )
+    ).json()
+    assert [item["slug"] for item in resp["data"]] == [newer.slug, older.slug]
+
+
+async def test_user_filter_explicit_sort_id_still_wins(
+    client, session, default_user, auth_headers
+):
+    """显式 sort=id 优先于「带 user_id 默认时间倒序」的新规则"""
+    newer, older = await _seed_reversed_order(session, default_user.id)
+    resp = (
+        await client.get(
+            f"/articles/?user_id={default_user.id}&sort=id", headers=auth_headers
+        )
+    ).json()
+    assert [item["slug"] for item in resp["data"]] == [older.slug, newer.slug]
+
+
+async def test_infinite_user_filter_defaults_to_create_at_desc_for_logged_in(
+    client, session, default_user, auth_headers
+):
+    """查看用户文章（无限滚动）：登录态默认按发布时间倒序"""
+    newer, older = await _seed_reversed_order(session, default_user.id)
+    resp = (
+        await client.get(
+            f"/articles/infinite?user_id={default_user.id}", headers=auth_headers
+        )
+    ).json()
+    assert [item["slug"] for item in resp["data"]] == [newer.slug, older.slug]

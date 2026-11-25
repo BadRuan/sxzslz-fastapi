@@ -12,6 +12,9 @@ class PageResponse[T](BaseModel):
     page: int = Field(description="当前页码")
     page_size: int = Field(description="每页条数")
     has_next: bool = Field(description="是否有下页")
+    total_pages: int = Field(
+        description="总页数（ceil(total/page_size)，total=0 时为 0；尾页直接跳转传 page=total_pages）"
+    )
 
 
 def page_response[T](data: list[T], total: int, page: int, page_size: int) -> PageResponse[T]:
@@ -22,6 +25,7 @@ def page_response[T](data: list[T], total: int, page: int, page_size: int) -> Pa
         page=page,
         page_size=page_size,
         has_next=page * page_size < total,
+        total_pages=(total + page_size - 1) // page_size,
     )
 
 
