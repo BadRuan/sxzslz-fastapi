@@ -274,7 +274,7 @@ function showError(res) {
 | `文章仅支持关联二级分类` | `category_ids` 含一级分类 id |
 | `字段 title 不能为空` | PATCH 非空字段显式传 `null`（字段名随实际而变） |
 | `文章不存在或已删除: xxx` | 批量分类时 slug 不存在（整批不生效） |
-| `无效的游标` | 无限滚动接口 `cursor` 被篡改或非本接口签发 |
+| `无效的游标` | 无限滚动接口 `cursor` 格式非法（无法解析或缺键） |
 | `用户名已存在` / `昵称已存在` | 创建账户时重名 |
 | `不支持的图片类型「{实际Content-Type}」，仅支持 JPG、PNG、GIF、WebP、BMP、TIFF、ICO 格式` | 图片 `Content-Type` 不在白名单（`{}` 内为服务端实际收到的 MIME，为空显示 `未知`） |
 | `不支持的文件类型「{实际Content-Type}」，仅支持 txt、csv、md、rtf、pdf、doc、docx、docm、xls、xlsx、xlsm、ppt、pptx、pptm、odt、ods、odp、zip、7z、rar、gz、tar、epub 格式` | 文档 `Content-Type` 不在白名单 |
@@ -608,7 +608,7 @@ function showError(res) {
 | user_id | int | 无 | 按作者过滤（仅超管生效，普通用户被强制收敛为本人） |
 | is_deleted | bool | false | `true` 时查回收站 |
 | keyword | string | 无 | 标题模糊搜索（多词空格分隔 AND，1~50 字） |
-| sort | `create_at` \| `id` | `create_at` | 排序字段，均为**倒序** |
+| sort | `create_at` \| `id` | 按调用者 | 排序字段，均为**倒序**：不传时匿名默认 `create_at`、登录默认 `id`（同 `GET /articles/`） |
 
 **响应** `200`：`ArticleInfiniteOut`：
 
@@ -634,7 +634,7 @@ function showError(res) {
 3. 游标是**不透明串**，按 `(排序字段, id)` 双键定位：同一发布时间的多篇文章翻页**不重复、不遗漏**；`sort` 或过滤条件变了就从第一页重新开始。
 
 **失败**：
-- `400 {"detail": "无效的游标"}`：`cursor` 被篡改或非本接口签发。
+- `400 {"detail": "无效的游标"}`：`cursor` 格式非法（无法解析或缺键）。注意游标**不防篡改**：它是不带签名的定位锚点，伪造的游标只可能把翻页窗口移到你可见范围内的任意位置，可见范围始终由服务端收敛。
 - `422`：`limit` 超出 1~100、`keyword` 超 50 字等格式问题。
 
 ### GET `/articles/stats`（需登录）
@@ -1410,7 +1410,7 @@ async function deleteDocument(slug) {
 | page | int | 1 | 页码（≥1） |
 | page_size | int | 20 | 每页条数（1~100） |
 | action | string | 无 | 操作类型精确过滤，如 `create_article` / `update_article` / `delete_article` |
-| object_type | string | 无 | 对象类型精确过滤，如 `article` / `image` / `document` / `user` |
+| object_type | string | 无 | 对象类型精确过滤，如 `article` / `image` / `document` / `account` |
 | result | string | 无 | `success` / `failed` |
 | operator_id | int | 无 | 操作者用户 id（≥1） |
 

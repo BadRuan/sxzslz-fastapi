@@ -117,6 +117,16 @@ async def test_infinite_invalid_cursor_400(client):
     assert resp.json()["detail"] == "无效的游标"
 
 
+async def test_infinite_cursor_missing_create_at_400(client):
+    """合法 base64 JSON 但缺 create_at 键（如 {"i":1}）：判无效游标 400，不得 500。"""
+    from app.schema.common import encode_cursor
+
+    cursor = encode_cursor(None, 1)  # 无 "c" 键的畸形游标
+    resp = await client.get(f"/articles/infinite?cursor={cursor}")
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "无效的游标"
+
+
 async def test_infinite_limit_bounds_422(client):
     resp0 = await client.get("/articles/infinite?limit=0")
     assert resp0.status_code == 422

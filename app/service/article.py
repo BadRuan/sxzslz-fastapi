@@ -110,8 +110,12 @@ class ArticleService:
         """
         if cursor:
             try:
-                decode_cursor(cursor)
+                pos = decode_cursor(cursor)
             except Exception:
+                raise ServiceError("无效的游标")
+            # 本接口签发的游标必含 (create_at, id) 双键；缺任一键（如 {"i":1}）
+            # 若放行到 dao 会拼出与 None 的比较表达式 → 500，故在此判无效游标。
+            if pos.get("create_at") is None or pos.get("id") is None:
                 raise ServiceError("无效的游标")
         if limit < 1:
             limit = DEFAULT_PAGE_SIZE

@@ -317,7 +317,7 @@ Content-Type: application/json
 
 > 响应模型与[数据模型](#数据模型)章节一一对应；标 ✓ 的接口需携带 `Authorization: Bearer <token>`。
 
-**无限滚动游标翻页**（`GET /articles/infinite`）：首页不传 `cursor`，把响应里的 `next_cursor` 原样拼进下一次请求 `?cursor=…`，`has_more=false` 表示到底。游标是不透明串，按 `(排序字段, id)` 双键定位，同一发布时间的多篇文章翻页不重复、不遗漏；`sort`/过滤条件变化后从第一页重新开始。被篡改的游标 → `400 无效的游标`。详见 [frontend-api.md](docs/frontend-api.md) 对应章节。
+**无限滚动游标翻页**（`GET /articles/infinite`）：首页不传 `cursor`，把响应里的 `next_cursor` 原样拼进下一次请求 `?cursor=…`，`has_more=false` 表示到底。游标是不透明串，按 `(排序字段, id)` 双键定位，同一发布时间的多篇文章翻页不重复、不遗漏；`sort`/过滤条件变化后从第一页重新开始。游标格式非法（无法解析或缺键）→ `400 无效的游标`；游标仅为定位锚点，不带签名、**不防篡改**（伪造游标只影响翻页位置，可见范围始终由服务端收敛）。详见 [frontend-api.md](docs/frontend-api.md) 对应章节。
 
 ---
 

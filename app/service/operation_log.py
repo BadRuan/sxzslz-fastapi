@@ -41,23 +41,26 @@ class OperationService:
     ) -> None:
         """向请求会话写入一条操作日志（仅 flush，commit 由请求会话负责）。
 
-        写入失败不抛出，仅记 Python 日志，避免影响主业务响应。
+        写入不抛出，失败仅记 Python 日志，避免影响主业务响应。
+        整个写入包在 SAVEPOINT（begin_nested）里：日志写失败只回滚到保存点，
+        不污染主事务——否则半成品日志行会随主请求提交，且 DB 层错误
+        （PostgreSQL 事务 aborted）会连带把主业务一起打死。
         """
         try:
             crud = OperationLogCrud(self.session)
-            await crud.add(
-                action=action,
-                object_type=object_type,
-                object_id=object_id,
-                object_name=object_name,
-                operator_id=operator_id,
-                operator_name=operator_name,
-                result=result,
-                message=message,
-                client_ip=client_ip,
-                user_agent=user_agent,
-            )
-            await self.session.flush()
+            async with self.session.begin_nested():
+                await crud.add(
+                    action=action,
+                    object_type=object_type,
+                    object_id=object_id,
+                    object_name=object_name,
+                    operator_id=operator_id,
+                    operator_name=operator_name,
+                    result=result,
+                    message=message,
+                    client_ip=client_ip,
+                    user_agent=user_agent,
+                )
         except Exception:  # 日志写入失败绝不影响主业务
             logger.exception(
                 "操作日志写入失败: action=%s object_type=%s object_id=%s",

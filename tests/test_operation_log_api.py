@@ -123,3 +123,25 @@ async def test_log_write_failure_does_not_break_business(
         "/articles/", json={"title": "日志写失败也要成功"}, headers=superadmin_headers
     )
     assert resp.status_code == 201
+
+
+async def test_log_write_failure_does_not_leak_partial_rows(session, monkeypatch):
+    """日志写失败（add 入会话后抛错）的半成品行不得随主事务提交（savepoint 隔离）。"""
+    from sqlmodel import select
+
+    from app.model.operation_log import OperationLog
+    from app.service.operation_log import OperationService
+
+    async def _half_written(self, **kwargs):
+        session.add(
+            OperationLog(action="create_article", object_type="article", object_id="boom")
+        )
+        raise RuntimeError("日志表写入失败")
+
+    monkeypatch.setattr("app.dao.operation_log.OperationLogCrud.add", _half_written)
+    await OperationService(session).log_operation(
+        action="create_article", object_type="article", object_id="1"
+    )
+    await session.commit()  # 模拟请求会话的收尾 commit
+    rows = (await session.exec(select(OperationLog))).all()
+    assert list(rows) == [], "日志写失败的半成品行不应随主事务提交"
