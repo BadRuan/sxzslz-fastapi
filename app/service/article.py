@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from typing import Literal, Optional
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.dao import ArticleCrud
+from app.errors import ServiceError
 from app.model import User
 from app.schema import (
     ArticleBatchCategoryIn,
@@ -16,6 +17,7 @@ from app.schema import (
     ArticleDetailOut,
     PageResponse,
     SearchScope,
+    decode_cursor,
     page_response,
 )
 from app.settings import settings
@@ -104,7 +106,13 @@ class ArticleService:
         """无限滚动列表：按 (order_by_field desc, id desc) 取 limit 条，返回 has_more/next_cursor。
 
         limit 被限制在 [1, MAX_PAGE_SIZE] 之间，避免单次请求过大。
+        cursor 非法（解码失败）→ ServiceError（→400），不落库查询。
         """
+        if cursor:
+            try:
+                decode_cursor(cursor)
+            except Exception:
+                raise ServiceError("无效的游标")
         if limit < 1:
             limit = DEFAULT_PAGE_SIZE
         if limit > MAX_PAGE_SIZE:

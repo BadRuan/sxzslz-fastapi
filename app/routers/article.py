@@ -11,6 +11,7 @@ from app.schema import (
     ArticleBatchCategoryIn,
     ArticleBatchCategoryOut,
     ArticleCreate,
+    ArticleInfiniteOut,
     ArticleOut,
     ArticleSearchOut,
     ArticleSearchPageOut,
@@ -213,6 +214,52 @@ async def article_stats(
     - 普通用户：本人近 15 天发布的文章数
     """
     return await ArticleService(session).stats(current_user)
+
+
+@router.get("/infinite", response_model=ArticleInfiniteOut)
+async def list_articles_infinite(
+    limit: int = Query(
+        default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="本批条数上限"
+    ),
+    cursor: Optional[str] = Query(
+        default=None, description="上一页返回的 next_cursor；首页不传"
+    ),
+    category_id: Optional[int] = Query(default=None, ge=1, description="分类ID"),
+    user_id: Optional[int] = Query(default=None, ge=1, description="作者用户ID"),
+    is_deleted: bool = Query(
+        default=False,
+        description="false（默认）只返回未删除文章；true 只返回回收站文章（后台）",
+    ),
+    keyword: Optional[str] = Query(
+        default=None,
+        min_length=1,
+        max_length=50,
+        description="按标题模糊搜索（1~50 字；空格分隔多词 AND）",
+    ),
+    sort: Optional[ArticleSort] = Query(
+        default=None,
+        description=(
+            "排序字段（均倒序）：create_at=发布时间 / id=发布 id；"
+            "不传时匿名默认 create_at、登录（后台管理）默认 id"
+        ),
+    ),
+    session: AsyncSession = Depends(get_session),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
+    """无限滚动列表：按 (sort desc, id desc) 游标分页，同 create_at 靠 id 双键消歧。
+
+    可见范围与 GET /articles/ 完全一致：匿名=公开全量；普通用户=固定只返回自己的
+    文章（user_id 参数被忽略）；超管=全部（可过滤）。非法 cursor → 400。
+    """
+    return await ArticleService(session).list_infinite(
+        limit,
+        cursor,
+        category_id,
+        _resolve_visible_user_id(user_id, current_user),
+        is_deleted,
+        order_by_field=_resolve_sort(sort, current_user).value,
+        keyword=_normalize_keyword(keyword),
+    )
 
 
 @router.get("/{slug}", response_model=ArticleDetailOut)
