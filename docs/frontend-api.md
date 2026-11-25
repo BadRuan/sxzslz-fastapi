@@ -17,8 +17,9 @@
 7. [文章模块 `/articles`](#7-文章模块-articles)
 8. [图片模块 `/image`](#8-图片模块-image)
 9. [文件模块 `/document`](#9-文件模块-document)
-10. [通用数据结构](#10-通用数据结构)
-11. [常见问题 FAQ](#11-常见问题-faq)
+10. [操作日志模块 `/logs`](#10-操作日志模块-logs)
+11. [通用数据结构](#11-通用数据结构)
+12. [常见问题 FAQ](#12-常见问题-faq)
 
 ---
 
@@ -256,6 +257,7 @@ function showError(res) {
 | `无权删除他人文章` / `无权恢复他人文章` | DELETE / restore 同上 |
 | `无权限操作该文件` | 图片/文档改名或删除非本人且非超管 |
 | `无权限查看该文件` | 下载他人文档 |
+| `仅超级管理员可查看操作日志` | 普通用户调用 `GET /logs/` |
 
 ### 常见 400 业务错误文案
 
@@ -272,6 +274,7 @@ function showError(res) {
 | `文章仅支持关联二级分类` | `category_ids` 含一级分类 id |
 | `字段 title 不能为空` | PATCH 非空字段显式传 `null`（字段名随实际而变） |
 | `文章不存在或已删除: xxx` | 批量分类时 slug 不存在（整批不生效） |
+| `无效的游标` | 无限滚动接口 `cursor` 被篡改或非本接口签发 |
 | `用户名已存在` / `昵称已存在` | 创建账户时重名 |
 | `不支持的图片类型「{实际Content-Type}」，仅支持 JPG、PNG、GIF、WebP、BMP、TIFF、ICO 格式` | 图片 `Content-Type` 不在白名单（`{}` 内为服务端实际收到的 MIME，为空显示 `未知`） |
 | `不支持的文件类型「{实际Content-Type}」，仅支持 txt、csv、md、rtf、pdf、doc、docx、docm、xls、xlsx、xlsm、ppt、pptx、pptm、odt、ods、odp、zip、7z、rar、gz、tar、epub 格式` | 文档 `Content-Type` 不在白名单 |
@@ -355,6 +358,30 @@ function showError(res) {
 ```
 
 > 分类严格二级：一级分类的 `children` 挂二级分类，二级分类 `children` 恒为 `[]`。文章只挂**二级分类**。
+
+---
+
+### GET `/base/storage`（需登录）
+
+服务器磁盘容量与 `uploads/` 目录占用，供后台「站点容量」展示。
+
+**响应** `200`：`StorageOut`：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| total | int | 磁盘总容量（字节） |
+| used | int | 已用（字节） |
+| free | int | 剩余（字节） |
+| usage_percent | float | 使用率（百分数） |
+| uploads_bytes | int | `uploads/` 目录占用（字节） |
+
+```json
+{ "total": 499470094336, "used": 408628961280, "free": 90841133056, "usage_percent": 81.8, "uploads_bytes": 123456789 }
+```
+
+**失败**：
+- `401`：未登录。
+- `500 {"detail": "无法读取磁盘容量信息"}`：磁盘信息不可读。
 
 ---
 
@@ -567,6 +594,72 @@ function showError(res) {
 
 > 性能提示：当前为 `ILIKE` 顺序扫描；数据量很大时再评估 `pg_trgm` 索引。高亮在后端不做，避免富文本 XSS。
 
+### GET `/articles/infinite`
+
+无限滚动**游标翻页**列表，可见范围与 [GET `/articles/`](#get-articles) 完全一致（匿名=公开全量；普通用户=固定只看自己；超管=全量可过滤）。与 `page` 分页互斥使用。
+
+**查询参数**：
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| limit | int | 20 | 每批条数（1~100） |
+| cursor | string | 无 | 游标，上一页返回的 `next_cursor`（不透明字符串，勿解析） |
+| category_id | int | 无 | 按**二级分类** id 精确过滤 |
+| user_id | int | 无 | 按作者过滤（仅超管生效，普通用户被强制收敛为本人） |
+| is_deleted | bool | false | `true` 时查回收站 |
+| keyword | string | 无 | 标题模糊搜索（多词空格分隔 AND，1~50 字） |
+| sort | `create_at` \| `id` | `create_at` | 排序字段，均为**倒序** |
+
+**响应** `200`：`ArticleInfiniteOut`：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| data | `ArticleOut[]` | 本批文章（元素结构同 `GET /articles/` 的 `data` 元素） |
+| limit | int | 实际生效的批大小 |
+| has_more | bool | 是否还有更多 |
+| next_cursor | string \| null | 下一页游标；`has_more=false` 时为 `null` |
+
+```json
+{
+  "data": [ { "id": 265, "slug": "f46bd9b7776c42e4", "...": "…同 ArticleOut…" } ],
+  "limit": 20,
+  "has_more": true,
+  "next_cursor": "eyJpIjogMjY1LCAiYyI6ICIyMDI2LTA5LTI0VDExOjIyOjAxLjY4MjgzMiJ9"
+}
+```
+
+**游标翻页用法**：
+1. 首页 `GET /articles/infinite?limit=20`（不传 `cursor`）；
+2. `has_more=true` 时把 `next_cursor` 原样拼进下一次请求 `?cursor=…`；`has_more=false` 表示到底（`next_cursor` 为 `null`）；
+3. 游标是**不透明串**，按 `(排序字段, id)` 双键定位：同一发布时间的多篇文章翻页**不重复、不遗漏**；`sort` 或过滤条件变了就从第一页重新开始。
+
+**失败**：
+- `400 {"detail": "无效的游标"}`：`cursor` 被篡改或非本接口签发。
+- `422`：`limit` 超出 1~100、`keyword` 超 50 字等格式问题。
+
+### GET `/articles/stats`（需登录）
+
+后台概览的**发布量统计**，口径随角色不同（服务端决定，前端直接展示 `label` + `count`）：
+
+| 调用者 | scope | 口径 |
+|--------|-------|------|
+| 超管 | `month` | 本月新增文章（全站，按发布时间，本月 1 日 0 点起） |
+| 普通用户 | `half_month` | 我的近半月发布（本人，近 15 天） |
+
+**响应** `200`：`ArticleStatsOut`：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| scope | `month` \| `half_month` | 统计口径标识 |
+| label | string | 展示文案，如 `本月新增文章` |
+| count | int | 命中文章数 |
+| start_at | datetime | 统计窗口开始 |
+| end_at | datetime | 统计窗口结束 |
+
+```json
+{ "scope": "month", "label": "本月新增文章", "count": 12, "start_at": "2026-11-01T00:00:00", "end_at": "2026-11-25T13:10:00.123456" }
+```
+
 ### POST `/articles/`（需登录）
 
 **请求体**：
@@ -591,7 +684,7 @@ function showError(res) {
 | user_id | int | ✗ | 当前登录用户 | **仅超管**：指定发布主体；普通用户传他人 → `403 无权指定其他用户发布` |
 | create_at | datetime | ✗ | 服务器当前时间 | **仅超管**：指定发布时间（ISO 8601，如 `2019-12-31T23:59:59`）；普通用户传入被忽略 |
 
-**成功** `201`：`ArticleDetailOut`（比列表多 `content` 字段，结构见 [10. 通用数据结构](#10-通用数据结构)）。
+**成功** `201`：`ArticleDetailOut`（比列表多 `content` 字段，结构见 [11. 通用数据结构](#11-通用数据结构)）。
 
 **失败**：`400` 分类无效；`403` 普通用户指定他人为作者；`422` 缺 `title`。
 
@@ -1304,7 +1397,49 @@ async function deleteDocument(slug) {
 
 ---
 
-## 10. 通用数据结构
+## 10. 操作日志模块 `/logs`
+
+### GET `/logs/`（仅超管）
+
+分页查询**操作日志**（审计），按 `created_at` 倒序（同刻按 `id` 倒序）。日志在文章/图片/文档/用户等写操作时自动落库，记录操作类型、对象、操作者与客户端信息。
+
+**查询参数**：
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| page | int | 1 | 页码（≥1） |
+| page_size | int | 20 | 每页条数（1~100） |
+| action | string | 无 | 操作类型精确过滤，如 `create_article` / `update_article` / `delete_article` |
+| object_type | string | 无 | 对象类型精确过滤，如 `article` / `image` / `document` / `user` |
+| result | string | 无 | `success` / `failed` |
+| operator_id | int | 无 | 操作者用户 id（≥1） |
+
+**响应** `200`：`PageResponse[OperationLogOut]`，`data` 元素字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | int | 日志 id |
+| action | string | 操作类型 |
+| object_type | string | 对象类型 |
+| object_id | string | 对象 id |
+| object_name | string \| null | 对象展示名（如标题/文件名） |
+| operator_id | int \| null | 操作者用户 id |
+| operator_name | string \| null | 操作者用户名 |
+| created_at | datetime | 发生时间 |
+| result | string | `success` / `failed` |
+| message | string \| null | 补充信息（失败原因等） |
+| client_ip | string \| null | 客户端 IP（取 `X-Forwarded-For` 首值，否则直连地址） |
+| user_agent | string \| null | User-Agent |
+
+**失败**：
+- `401`：未登录。
+- `403 {"detail": "仅超级管理员可查看操作日志"}`：普通用户调用。
+
+> 注：日志写入随主请求事务提交；主请求整体失败回滚时，该请求的失败日志也可能不落库（当前已知取舍）。
+
+---
+
+## 11. 通用数据结构
 
 ### TokenOut
 
@@ -1406,7 +1541,51 @@ async function deleteDocument(slug) {
 
 ---
 
-## 11. 常见问题 FAQ
+**`ArticleInfiniteOut`**（`GET /articles/infinite`）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| data | `ArticleOut[]` | 本批文章 |
+| limit | int | 实际生效的批大小 |
+| has_more | bool | 是否还有更多 |
+| next_cursor | string \| null | 下一页游标，到底为 `null` |
+
+**`ArticleStatsOut`**（`GET /articles/stats`）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| scope | `month` \| `half_month` | 统计口径 |
+| label | string | 展示文案 |
+| count | int | 命中文章数 |
+| start_at / end_at | datetime | 统计窗口 |
+
+**`StorageOut`**（`GET /base/storage`）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| total / used / free | int | 磁盘总/已用/剩余（字节） |
+| usage_percent | float | 使用率（百分数） |
+| uploads_bytes | int | `uploads/` 占用（字节） |
+
+**`OperationLogOut`**（`GET /logs/` 的 `data` 元素）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | int | 日志 id |
+| action | string | 操作类型 |
+| object_type / object_id | string | 对象类型 / id |
+| object_name | string \| null | 对象展示名 |
+| operator_id | int \| null | 操作者 id |
+| operator_name | string \| null | 操作者用户名 |
+| created_at | datetime | 发生时间 |
+| result | string | `success` / `failed` |
+| message | string \| null | 补充信息 |
+| client_ip | string \| null | 客户端 IP |
+| user_agent | string \| null | User-Agent |
+
+---
+
+## 12. 常见问题 FAQ
 
 **Q：请求 `/articles`（不带尾斜杠）返回 307？**
 集合路径必须带尾斜杠：`/articles/`。307 会重定向，部分浏览器对重定向后的 POST/PATCH 请求体处理异常。

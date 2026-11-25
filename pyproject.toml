@@ -1,7 +1,7 @@
 [project]
 name = "sxzslz-fastapi"
 version = "0.1.0"
-description = "Add your description here"
+description = "FastAPI + SQLModel 异步内容 API（分类/文章/图片/文档 + JWT）"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

@@ -283,7 +283,9 @@ Content-Type: application/json
 | POST | `/users/` | ✓ | 创建普通账户（仅超管，密码缺省 abc123） | `UserOut` |
 | POST | `/users/{id}/reset-password` | ✓ | 重置普通账户密码为 abc123（仅超管） | `{"detail": ...}` |
 | DELETE | `/users/{id}` | ✓ | 删除普通账户（仅超管，内容保留） | 204 空 |
+| GET | `/logs/` | ✓ | 操作日志分页查询（仅超管） | `PageResponse[OperationLogOut]` |
 | GET | `/base/` | ✗ | 首页基础信息（分类树 + 用户列表） | `BaseInfoOut` |
+| GET | `/base/storage` | ✓ | 站点容量（磁盘用量 + uploads 占用） | `StorageOut` |
 | GET | `/categories/` | ✗ | 分类列表（扁平） | `CategoryOut[]` |
 | POST | `/categories/` | ✓ | 创建分类 | `CategoryOut` |
 | GET | `/categories/{id}` | ✗ | 获取单个分类 | `CategoryOut` |
@@ -291,6 +293,8 @@ Content-Type: application/json
 | DELETE | `/categories/{id}` | ✓ | 删除分类（级联删除子分类） | 204 空 |
 | GET | `/articles/` | ✗ | 文章分页列表 | `PageResponse[ArticleOut]` |
 | GET | `/articles/search` | ✗ | 标题/正文关键词搜索（多词 AND，按发布时间倒序） | `PageResponse[ArticleSearchOut]` |
+| GET | `/articles/infinite` | ✗ | 无限滚动游标翻页（可见范围同 `GET /articles/`） | `ArticleInfiniteOut` |
+| GET | `/articles/stats` | ✓ | 发布量统计（超管=本月新增 / 普通=我的近半月发布） | `ArticleStatsOut` |
 | POST | `/articles/` | ✓ | 创建文章（超管可指定作者/时间） | `ArticleDetailOut` |
 | POST | `/articles/batch-category` | ✓ | 批量加入/移出分类 | `ArticleBatchCategoryOut` |
 | GET | `/articles/{slug}` | ✗ | 文章详情 | `ArticleDetailOut` |
@@ -312,6 +316,8 @@ Content-Type: application/json
 | GET | `/document/{slug}` | ✓ | 下载文件（本人或超管） | 二进制流 |
 
 > 响应模型与[数据模型](#数据模型)章节一一对应；标 ✓ 的接口需携带 `Authorization: Bearer <token>`。
+
+**无限滚动游标翻页**（`GET /articles/infinite`）：首页不传 `cursor`，把响应里的 `next_cursor` 原样拼进下一次请求 `?cursor=…`，`has_more=false` 表示到底。游标是不透明串，按 `(排序字段, id)` 双键定位，同一发布时间的多篇文章翻页不重复、不遗漏；`sort`/过滤条件变化后从第一页重新开始。被篡改的游标 → `400 无效的游标`。详见 [frontend-api.md](docs/frontend-api.md) 对应章节。
 
 ---
 
@@ -1094,6 +1100,56 @@ files: <二进制文件2>
 | page | int | 当前页码 |
 | page_size | int | 每页条数 |
 | has_next | bool | 是否有下一页 |
+
+### ArticleInfiniteOut
+
+`GET /articles/infinite`（无限滚动游标翻页）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| data | `ArticleOut[]` | 本批文章 |
+| limit | int | 实际生效的批大小 |
+| has_more | bool | 是否还有更多 |
+| next_cursor | string \| null | 下一页游标，到底为 `null` |
+
+### ArticleStatsOut
+
+`GET /articles/stats`（发布量统计，口径随角色）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| scope | `month` \| `half_month` | 统计口径（超管=本月新增 / 普通=我的近半月发布） |
+| label | string | 展示文案，如 `本月新增文章` |
+| count | int | 命中文章数 |
+| start_at / end_at | datetime | 统计窗口 |
+
+### StorageOut
+
+`GET /base/storage`（站点容量）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| total / used / free | int | 磁盘总/已用/剩余（字节） |
+| usage_percent | float | 使用率（百分数） |
+| uploads_bytes | int | `uploads/` 目录占用（字节） |
+
+### OperationLogOut
+
+`GET /logs/` 的 `data` 元素（操作日志，仅超管）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | int | 日志 id |
+| action | string | 操作类型（如 `create_article`） |
+| object_type / object_id | string | 对象类型 / id |
+| object_name | string \| null | 对象展示名 |
+| operator_id | int \| null | 操作者用户 id |
+| operator_name | string \| null | 操作者用户名 |
+| created_at | datetime | 发生时间 |
+| result | string | `success` / `failed` |
+| message | string \| null | 补充信息（失败原因等） |
+| client_ip | string \| null | 客户端 IP |
+| user_agent | string \| null | User-Agent |
 
 ---
 
