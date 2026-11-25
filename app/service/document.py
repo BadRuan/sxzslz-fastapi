@@ -11,6 +11,7 @@ from app.model.document import generate_slug
 from app.schema import DocumentOut, DocumentSort, PageResponse, page_response
 from app.settings import DOCUMENT_TYPE_LABEL, allow_type, settings, upload_dir
 from app.service.file import BaseFileService
+from app.service.operation_log import OperationService
 from app.utils import storage_error_from
 
 
@@ -25,6 +26,7 @@ def ensure_document_type(content_type: str | None) -> None:
 
 class DocumentService(BaseFileService[Document]):
     def __init__(self, session: AsyncSession) -> None:
+        self.session = session
         super().__init__(
             DocumentCrud(session),
             slug_factory=generate_slug,
@@ -51,9 +53,59 @@ class DocumentService(BaseFileService[Document]):
         )
 
     async def add(
-        self, filename: str, mime_type: str, file: UploadFile, user_id: int
+        self,
+        filename: str,
+        mime_type: str,
+        file: UploadFile,
+        user_id: int,
+        *,
+        operator_id: Optional[int] = None,
+        operator_name: Optional[str] = None,
+        client_ip: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> Optional[Document]:
-        return await super().add(filename, mime_type, file, user_id)
+        try:
+            result = await super().add(filename, mime_type, file, user_id)
+        except ServiceError as exc:
+            await OperationService(self.session).log_operation(
+                action="upload_document",
+                object_type="document",
+                object_id=filename,
+                object_name=filename,
+                operator_id=operator_id,
+                operator_name=operator_name,
+                result="failed",
+                message=str(exc),
+                client_ip=client_ip,
+                user_agent=user_agent,
+            )
+            raise
+        if result is None:
+            await OperationService(self.session).log_operation(
+                action="upload_document",
+                object_type="document",
+                object_id=filename,
+                object_name=filename,
+                operator_id=operator_id,
+                operator_name=operator_name,
+                result="failed",
+                message="上传失败",
+                client_ip=client_ip,
+                user_agent=user_agent,
+            )
+            return None
+        await OperationService(self.session).log_operation(
+            action="upload_document",
+            object_type="document",
+            object_id=result.slug,
+            object_name=result.raw_filename,
+            operator_id=operator_id,
+            operator_name=operator_name,
+            result="success",
+            client_ip=client_ip,
+            user_agent=user_agent,
+        )
+        return result
 
     async def add_many(self, files: list[UploadFile], user_id: int) -> list[Document]:
         return await super().add_many(files, user_id)
@@ -62,13 +114,72 @@ class DocumentService(BaseFileService[Document]):
         """只读查询，不自增 view（权限校验 / 改名前定位用）"""
         return await self.crud.get_by_slug(slugname)
 
-    async def remove(self, slugname: str) -> bool:
+    async def remove(
+        self,
+        slugname: str,
+        *,
+        operator_id: Optional[int] = None,
+        operator_name: Optional[str] = None,
+        client_ip: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> bool:
         """删除 DB 记录并清理磁盘文件；记录不存在返回 False"""
-        return await super().remove(slugname)
+        existing = await self.crud.get_by_slug(slugname)
+        object_name = existing.raw_filename if existing else None
+        result = await self._remove(slugname)
+        await OperationService(self.session).log_operation(
+            action="delete_document",
+            object_type="document",
+            object_id=slugname,
+            object_name=object_name,
+            operator_id=operator_id,
+            operator_name=operator_name,
+            result="success" if result else "failed",
+            message=None if result else "文档不存在",
+            client_ip=client_ip,
+            user_agent=user_agent,
+        )
+        return result
 
-    async def rename(self, slugname: str, raw_filename: str) -> Optional[Document]:
+    async def rename(
+        self,
+        slugname: str,
+        raw_filename: str,
+        *,
+        operator_id: Optional[int] = None,
+        operator_name: Optional[str] = None,
+        client_ip: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> Optional[Document]:
         """改展示名；记录不存在返回 None"""
-        return await self.crud.update_raw_filename(slugname, raw_filename)
+        existing = await self.crud.get_by_slug(slugname)
+        if existing is None:
+            await OperationService(self.session).log_operation(
+                action="update_document_name",
+                object_type="document",
+                object_id=slugname,
+                object_name=None,
+                operator_id=operator_id,
+                operator_name=operator_name,
+                result="failed",
+                message="文档不存在",
+                client_ip=client_ip,
+                user_agent=user_agent,
+            )
+            return None
+        updated = await self.crud.update_raw_filename(slugname, raw_filename)
+        await OperationService(self.session).log_operation(
+            action="update_document_name",
+            object_type="document",
+            object_id=slugname,
+            object_name=raw_filename,
+            operator_id=operator_id,
+            operator_name=operator_name,
+            result="success",
+            client_ip=client_ip,
+            user_agent=user_agent,
+        )
+        return updated
 
     async def get_by_slug(self, slugname: str) -> Optional[Document]:
         document: Optional[Document] = await self.crud.get_by_slug(slugname)

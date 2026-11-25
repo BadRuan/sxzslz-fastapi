@@ -2,14 +2,14 @@ from enum import Enum
 from os import path
 from typing import List
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.auth import get_current_user
 from app.database import get_session
 from app.model import Image, User
-from app.routers._common import ensure_owner_or_superuser, to_upload_result_image, visible_user_id
+from app.routers._common import client_info, ensure_owner_or_superuser, to_upload_result_image, visible_user_id
 from app.schema import ImageOut, ImageUpdate, PageResponse, UploadResult
 from app.service import ImageService
 from app.settings import upload_dir
@@ -40,16 +40,22 @@ async def get_images(
 
 @router.post("/", response_model=UploadResult)
 async def upload_image(
+    request: Request,
     file: UploadFile,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
+    client_ip, user_agent = client_info(request)
     # 类型白名单 / 大小 / 空文件等校验在 service 层，ServiceError 由全局 handler 转 400
     image = await ImageService(session).add(
         filename=file.filename or "default_name",
         mime_type=file.content_type or "",
         file=file,
         user_id=current_user.id,
+        operator_id=current_user.id,
+        operator_name=current_user.nickname,
+        client_ip=client_ip,
+        user_agent=user_agent,
     )
     if image is None:
         raise HTTPException(status_code=400, detail="上传失败")
@@ -110,12 +116,14 @@ async def get_image(
 
 @router.patch("/{slug}", response_model=ImageOut)
 async def update_image(
+    request: Request,
     slug: str,
     data: ImageUpdate,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """仅上传者本人或超管可改展示名"""
+    client_ip, user_agent = client_info(request)
     service = ImageService(session)
     image = await service.find_by_slug(slug)
     if image is None:
@@ -123,7 +131,14 @@ async def update_image(
             status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
         )
     ensure_owner_or_superuser(image.user_id, current_user)
-    updated = await service.rename(slug, data.raw_filename)
+    updated = await service.rename(
+        slug,
+        data.raw_filename,
+        operator_id=current_user.id,
+        operator_name=current_user.nickname,
+        client_ip=client_ip,
+        user_agent=user_agent,
+    )
     if updated is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
@@ -133,11 +148,13 @@ async def update_image(
 
 @router.delete("/{slug}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_image(
+    request: Request,
     slug: str,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """仅上传者本人或超管可删：DB 记录 + 磁盘文件（原图/预览图）一并清理"""
+    client_ip, user_agent = client_info(request)
     service = ImageService(session)
     image = await service.find_by_slug(slug)
     if image is None:
@@ -145,5 +162,11 @@ async def delete_image(
             status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
         )
     ensure_owner_or_superuser(image.user_id, current_user)
-    await service.remove_by_slug(slug)
+    await service.remove_by_slug(
+        slug,
+        operator_id=current_user.id,
+        operator_name=current_user.nickname,
+        client_ip=client_ip,
+        user_agent=user_agent,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

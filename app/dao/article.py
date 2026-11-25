@@ -6,6 +6,7 @@ from sqlmodel import select, func, desc, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.errors import ServiceError
 from app.model import Article, ArticleCategory, Category
+from app.schema.common import decode_cursor, encode_cursor
 from app.utils.search import escape_like, split_terms
 
 
@@ -79,6 +80,71 @@ class ArticleCrud:
         )
         result = await self.session.exec(data_stmt)
         return list(result.all()), total
+
+    async def list_infinite(
+        self,
+        limit: int,
+        cursor: Optional[str] = None,
+        category_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+        is_deleted: bool = False,
+        order_by_field: Literal["id", "create_at"] = "create_at",
+        keyword: Optional[str] = None,
+    ) -> Tuple[List[Article], bool, Optional[str]]:
+        """无限滚动分页：按 (order_by_field desc, id desc) 取 limit+1 条，
+        多取的 1 条用于判断 has_more；游标基于 (create_at, id) 双键编码，
+        保证翻页时无重复、无遗漏。
+
+        返回 (items, has_more, next_cursor)；has_more 为 False 时 next_cursor 为 None。
+        """
+        base = select(Article).where(Article.is_deleted == is_deleted)
+        if user_id is not None:
+            base = base.where(Article.user_id == user_id)
+        if category_id is not None:
+            related = (
+                select(ArticleCategory.article_id)
+                .where(
+                    ArticleCategory.article_id == Article.id,
+                    ArticleCategory.category_id == category_id,
+                )
+            )
+            base = base.where(exists(related))
+        if keyword:
+            for term in split_terms(keyword):
+                pattern = f"%{escape_like(term)}%"
+                base = base.where(Article.title.ilike(pattern, escape="\\"))
+
+        if cursor:
+            pos = decode_cursor(cursor)
+            after_id = pos["id"]
+            after_time = pos.get("create_at")
+            sort_column = getattr(Article, order_by_field)  # type: ignore[arg-type]
+            if order_by_field == "id":
+                base = base.where(Article.id < after_id)
+            else:
+                # create_at desc, id desc：create_at 相等时 id 必须更小
+                base = base.where(
+                    (sort_column < after_time)
+                    | ((sort_column == after_time) & (Article.id < after_id))  # type: ignore[arg-type]
+                )
+
+        sort_column = getattr(Article, order_by_field)  # type: ignore[arg-type]
+        order_clauses = [desc(sort_column)]
+        if order_by_field != "id":
+            order_clauses.append(desc(Article.id))
+        data_stmt = self._with_relations(
+            base.order_by(*order_clauses).limit(limit + 1)
+        )
+        result = await self.session.exec(data_stmt)
+        rows = list(result.all())
+
+        has_more = len(rows) > limit
+        items = rows[:limit]
+        next_cursor: Optional[str] = None
+        if has_more and items:
+            last = items[-1]
+            next_cursor = encode_cursor(last.create_at, last.id)
+        return items, has_more, next_cursor
 
     async def search_paginated(
         self,

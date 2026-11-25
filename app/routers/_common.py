@@ -6,11 +6,26 @@
 
 from typing import Optional
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 
 from app.model import Document, Image, User
 from app.schema import UploadResult
 from app.types import FILE_FORBIDDEN
+
+
+def client_info(request: Request) -> tuple[Optional[str], Optional[str]]:
+    """从请求中提取客户端 IP 与 User-Agent，供操作日志记录。
+
+    IP 优先取 X-Forwarded-For 首个值（反向代理场景），否则取直接连接 IP。
+    """
+    client_ip: Optional[str] = None
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        client_ip = forwarded.split(",")[0].strip()
+    else:
+        client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    return client_ip, user_agent
 
 
 def ensure_owner_or_superuser(

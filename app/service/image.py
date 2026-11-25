@@ -12,6 +12,7 @@ from app.model.image import generate_slug
 from app.schema import ImageOut, PageResponse, page_response
 from app.settings import IMAGE_TYPE_LABEL, allow_type, settings, upload_dir
 from app.service.file import BaseFileService, _UploadResult
+from app.service.operation_log import OperationService
 from app.utils import generate_webp_images, storage_error_from
 
 
@@ -26,6 +27,7 @@ def ensure_image_type(content_type: str | None) -> None:
 
 class ImageService(BaseFileService[Image]):
     def __init__(self, session: AsyncSession) -> None:
+        self.session = session
         super().__init__(
             ImageCrud(session),
             slug_factory=generate_slug,
@@ -84,9 +86,59 @@ class ImageService(BaseFileService[Image]):
         )
 
     async def add(
-        self, filename: str, mime_type: str, file: UploadFile, user_id: int
+        self,
+        filename: str,
+        mime_type: str,
+        file: UploadFile,
+        user_id: int,
+        *,
+        operator_id: Optional[int] = None,
+        operator_name: Optional[str] = None,
+        client_ip: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> Optional[Image]:
-        return await super().add(filename, mime_type, file, user_id)
+        try:
+            result = await super().add(filename, mime_type, file, user_id)
+        except ServiceError as exc:
+            await OperationService(self.session).log_operation(
+                action="upload_image",
+                object_type="image",
+                object_id=filename,
+                object_name=filename,
+                operator_id=operator_id,
+                operator_name=operator_name,
+                result="failed",
+                message=str(exc),
+                client_ip=client_ip,
+                user_agent=user_agent,
+            )
+            raise
+        if result is None:
+            await OperationService(self.session).log_operation(
+                action="upload_image",
+                object_type="image",
+                object_id=filename,
+                object_name=filename,
+                operator_id=operator_id,
+                operator_name=operator_name,
+                result="failed",
+                message="上传失败",
+                client_ip=client_ip,
+                user_agent=user_agent,
+            )
+            return None
+        await OperationService(self.session).log_operation(
+            action="upload_image",
+            object_type="image",
+            object_id=result.slug,
+            object_name=result.raw_filename,
+            operator_id=operator_id,
+            operator_name=operator_name,
+            result="success",
+            client_ip=client_ip,
+            user_agent=user_agent,
+        )
+        return result
 
     async def add_many(self, files: list[UploadFile], user_id: int) -> list[Image]:
         return await super().add_many(files, user_id)
@@ -95,12 +147,71 @@ class ImageService(BaseFileService[Image]):
         """只读查询，不自增 view（权限校验 / 改名前定位用）"""
         return await self.crud.get_by_slug(slugname)
 
-    async def remove_by_slug(self, slugname: str) -> bool:
-        return await self.remove(slugname)
+    async def remove_by_slug(
+        self,
+        slugname: str,
+        *,
+        operator_id: Optional[int] = None,
+        operator_name: Optional[str] = None,
+        client_ip: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> bool:
+        existing = await self.crud.get_by_slug(slugname)
+        object_name = existing.raw_filename if existing else None
+        result = await self.remove(slugname)
+        await OperationService(self.session).log_operation(
+            action="delete_image",
+            object_type="image",
+            object_id=slugname,
+            object_name=object_name,
+            operator_id=operator_id,
+            operator_name=operator_name,
+            result="success" if result else "failed",
+            message=None if result else "图片不存在",
+            client_ip=client_ip,
+            user_agent=user_agent,
+        )
+        return result
 
-    async def rename(self, slugname: str, raw_filename: str) -> Optional[Image]:
+    async def rename(
+        self,
+        slugname: str,
+        raw_filename: str,
+        *,
+        operator_id: Optional[int] = None,
+        operator_name: Optional[str] = None,
+        client_ip: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> Optional[Image]:
         """改展示名；记录不存在返回 None"""
-        return await self.crud.update_raw_filename(slugname, raw_filename)
+        existing = await self.crud.get_by_slug(slugname)
+        if existing is None:
+            await OperationService(self.session).log_operation(
+                action="update_image_name",
+                object_type="image",
+                object_id=slugname,
+                object_name=None,
+                operator_id=operator_id,
+                operator_name=operator_name,
+                result="failed",
+                message="图片不存在",
+                client_ip=client_ip,
+                user_agent=user_agent,
+            )
+            return None
+        updated = await self.crud.update_raw_filename(slugname, raw_filename)
+        await OperationService(self.session).log_operation(
+            action="update_image_name",
+            object_type="image",
+            object_id=slugname,
+            object_name=raw_filename,
+            operator_id=operator_id,
+            operator_name=operator_name,
+            result="success",
+            client_ip=client_ip,
+            user_agent=user_agent,
+        )
+        return updated
 
     async def get_by_slug(self, slugname: str) -> Optional[Image]:
         image: Optional[Image] = await self.crud.get_by_slug(slugname)

@@ -156,9 +156,10 @@ class BaseFileService(Generic[ModelT]):
                     raise ServiceError(file_error(index, file, "上传失败"))
                 created.append(item)
         except Exception:
-            # 清理本批已写入的文件与记录；DB 由 get_session 统一 rollback
+            # 清理本批已写入的文件与记录；DB 由 get_session 统一 rollback。
+            # 使用 _remove（不写操作日志），避免把“清理半成品”误记为用户删除。
             for item in created:
-                await self.remove(item.slug)
+                await self._remove(item.slug)
             raise
         return created
 
@@ -171,13 +172,21 @@ class BaseFileService(Generic[ModelT]):
         """改展示名；记录不存在返回 None"""
         return await self.crud.update_raw_filename(slugname, raw_filename)
 
-    async def remove(self, slugname: str) -> bool:
-        """删除 DB 记录并清理磁盘文件；记录不存在返回 False"""
+    async def _remove(self, slugname: str) -> bool:
+        """内部删除：DB 记录 + 磁盘文件，不写操作日志。
+
+        供 `add_many` 失败时的本批清理调用，避免把“清理半成品”误记为用户删除操作；
+        子类可覆写 `remove_file` 以同时删除预览图等。
+        """
         result = await self.crud.remove_by_slug(slugname)
         if result:
             self.remove_file(slugname)
             return True
         return False
+
+    async def remove(self, slugname: str) -> bool:
+        """删除 DB 记录并清理磁盘文件；记录不存在返回 False。"""
+        return await self._remove(slugname)
 
     async def get_by_slug(self, slugname: str) -> Optional[ModelT]:
         item: Optional[ModelT] = await self.crud.get_by_slug(slugname)

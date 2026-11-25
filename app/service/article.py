@@ -1,13 +1,13 @@
 from datetime import datetime, timedelta
 from typing import Literal, Optional
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.settings import settings
 from app.dao import ArticleCrud
 from app.model import User
 from app.schema import (
     ArticleBatchCategoryIn,
     ArticleBatchCategoryOut,
     ArticleCreate,
+    ArticleInfiniteOut,
     ArticleUpdate,
     ArticleOut,
     ArticleSearchOut,
@@ -18,14 +18,27 @@ from app.schema import (
     SearchScope,
     page_response,
 )
+from app.settings import settings
+from app.service.operation_log import OperationService
+from app.types import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.utils.search import build_snippet, matched_fields, split_terms
 
 
 class ArticleService:
     def __init__(self, session: AsyncSession) -> None:
+        self.session = session
         self.crud = ArticleCrud(session)
 
-    async def create(self, data: ArticleCreate, user_id: Optional[int] = None) -> ArticleDetailOut:
+    async def create(
+        self,
+        data: ArticleCreate,
+        user_id: Optional[int] = None,
+        *,
+        operator_id: Optional[int] = None,
+        operator_name: Optional[str] = None,
+        client_ip: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> ArticleDetailOut:
         article = await self.crud.create(
             title=data.title,
             content=data.content,
@@ -37,6 +50,17 @@ class ArticleService:
             create_at=data.create_at,
         )
         article = await self.crud.get_by_slug(article.slug)
+        await OperationService(self.session).log_operation(
+            action="create_article",
+            object_type="article",
+            object_id=article.slug,
+            object_name=data.title,
+            operator_id=operator_id,
+            operator_name=operator_name,
+            result="success",
+            client_ip=client_ip,
+            user_agent=user_agent,
+        )
         return ArticleDetailOut.model_validate(article)
 
     async def list_paginated(
@@ -65,6 +89,40 @@ class ArticleService:
         )
         return page_response(
             [ArticleOut.model_validate(a) for a in items], total, page, page_size
+        )
+
+    async def list_infinite(
+        self,
+        limit: int = DEFAULT_PAGE_SIZE,
+        cursor: Optional[str] = None,
+        category_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+        is_deleted: bool = False,
+        order_by_field: Literal["id", "create_at"] = "create_at",
+        keyword: Optional[str] = None,
+    ) -> ArticleInfiniteOut:
+        """无限滚动列表：按 (order_by_field desc, id desc) 取 limit 条，返回 has_more/next_cursor。
+
+        limit 被限制在 [1, MAX_PAGE_SIZE] 之间，避免单次请求过大。
+        """
+        if limit < 1:
+            limit = DEFAULT_PAGE_SIZE
+        if limit > MAX_PAGE_SIZE:
+            limit = MAX_PAGE_SIZE
+        items, has_more, next_cursor = await self.crud.list_infinite(
+            limit,
+            cursor=cursor,
+            category_id=category_id,
+            user_id=user_id,
+            is_deleted=is_deleted,
+            order_by_field=order_by_field,
+            keyword=keyword,
+        )
+        return ArticleInfiniteOut(
+            data=[ArticleOut.model_validate(a) for a in items],
+            limit=limit,
+            has_more=has_more,
+            next_cursor=next_cursor,
         )
 
     async def search_paginated(
@@ -128,6 +186,10 @@ class ArticleService:
         data: ArticleUpdate,
         *,
         allow_admin_fields: bool = False,
+        operator_id: Optional[int] = None,
+        operator_name: Optional[str] = None,
+        client_ip: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> Optional[ArticleDetailOut]:
         """allow_admin_fields=False（普通用户）时剥离 user_id / create_at，其余字段照常更新"""
         fields = data.model_dump(exclude_unset=True)
@@ -136,12 +198,58 @@ class ArticleService:
             fields.pop("create_at", None)
         article = await self.crud.update(slug, **fields)
         if article is None:
+            await OperationService(self.session).log_operation(
+                action="update_article",
+                object_type="article",
+                object_id=slug,
+                object_name=None,
+                operator_id=operator_id,
+                operator_name=operator_name,
+                result="failed",
+                message="文章不存在",
+                client_ip=client_ip,
+                user_agent=user_agent,
+            )
             return None
         article = await self.crud.get_by_slug(slug)
+        await OperationService(self.session).log_operation(
+            action="update_article",
+            object_type="article",
+            object_id=slug,
+            object_name=article.title,
+            operator_id=operator_id,
+            operator_name=operator_name,
+            result="success",
+            client_ip=client_ip,
+            user_agent=user_agent,
+        )
         return ArticleDetailOut.model_validate(article)
 
-    async def delete(self, slug: str) -> bool:
-        return await self.crud.soft_delete(slug)
+    async def delete(
+        self,
+        slug: str,
+        *,
+        operator_id: Optional[int] = None,
+        operator_name: Optional[str] = None,
+        client_ip: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> bool:
+        article = await self.crud.get_by_slug(slug)
+        object_name = article.title if article else None
+        result = await self.crud.soft_delete(slug)
+        await OperationService(self.session).log_operation(
+            action="delete_article",
+            object_type="article",
+            object_id=slug,
+            object_name=object_name,
+            operator_id=operator_id,
+            operator_name=operator_name,
+            client_ip=client_ip,
+            user_agent=user_agent,
+            result="success" if result else "failed",
+            message=None if result else "文章不存在",
+        )
+        return result
 
     async def batch_category(self, data: ArticleBatchCategoryIn) -> ArticleBatchCategoryOut:
         """批量加入/移出分类；分类无效或文章不存在抛 ServiceError（→400）"""

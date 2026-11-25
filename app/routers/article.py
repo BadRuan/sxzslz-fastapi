@@ -1,10 +1,11 @@
 from time import perf_counter
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.auth import get_current_user, get_optional_user, require_superuser
 from app.database import get_session
 from app.model import User
+from app.routers._common import client_info
 from app.service import ArticleService
 from app.schema import (
     ArticleBatchCategoryIn,
@@ -79,6 +80,7 @@ def _normalize_keyword(keyword: Optional[str]) -> Optional[str]:
 @router.post("/", response_model=ArticleDetailOut, status_code=status.HTTP_201_CREATED)
 async def create_article(
     data: ArticleCreate,
+    request: Request,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -89,7 +91,15 @@ async def create_article(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="无权指定其他用户发布"
         )
-    return await ArticleService(session).create(data, user_id=author_id)
+    client_ip, user_agent = client_info(request)
+    return await ArticleService(session).create(
+        data,
+        user_id=author_id,
+        operator_id=current_user.id,
+        operator_name=current_user.nickname,
+        client_ip=client_ip,
+        user_agent=user_agent,
+    )
 
 
 @router.post("/batch-category", response_model=ArticleBatchCategoryOut)
@@ -219,6 +229,7 @@ async def get_article(slug: str, session: AsyncSession = Depends(get_session)):
 async def update_article(
     slug: str,
     data: ArticleUpdate,
+    request: Request,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -228,8 +239,15 @@ async def update_article(
     if existing is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")
     _ensure_can_modify(existing.user_id, current_user)
+    client_ip, user_agent = client_info(request)
     article = await service.update(
-        slug, data, allow_admin_fields=current_user.is_superuser
+        slug,
+        data,
+        allow_admin_fields=current_user.is_superuser,
+        operator_id=current_user.id,
+        operator_name=current_user.nickname,
+        client_ip=client_ip,
+        user_agent=user_agent,
     )
     if article is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")
@@ -249,6 +267,7 @@ async def like_article(slug: str, session: AsyncSession = Depends(get_session)):
 @router.delete("/{slug}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_article(
     slug: str,
+    request: Request,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -258,7 +277,14 @@ async def delete_article(
     if existing is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文章不存在")
     _ensure_can_modify(existing.user_id, current_user, detail=ARTICLE_DELETE_FORBIDDEN)
-    await service.delete(slug)
+    client_ip, user_agent = client_info(request)
+    await service.delete(
+        slug,
+        operator_id=current_user.id,
+        operator_name=current_user.nickname,
+        client_ip=client_ip,
+        user_agent=user_agent,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
